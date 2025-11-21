@@ -1,28 +1,37 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
-export type Channel = "SMS" | "WHATSAPP" | "PUSH";
+export type Channel = "SMS" | "WHATSAPP" | "PUSH" | "EMAIL";
 
 export interface INotification extends Document {
-  to: string;
+  userId?: string;
+  type: string;
+  title: string;
+  message: string;
   channel: Channel;
-  templateKey: string;
-  payload: Record<string, any>;
-  status: "PENDING" | "SENT" | "FAILED";
+  status: "PENDING" | "SENT" | "FAILED" | "READ";
+  metadata?: Record<string, any>;
   errorMessage?: string;
 }
 
 const NotificationSchema = new Schema<INotification>(
   {
-    to: { type: String, required: true },
-    channel: { type: String, enum: ["SMS", "WHATSAPP", "PUSH"], required: true },
-    templateKey: { type: String, required: true },
-    payload: { type: Schema.Types.Mixed, default: {} },
+    userId: { type: String, index: true },
+    type: { type: String, required: true, index: true },
+    title: { type: String, required: true },
+    message: { type: String, required: true },
+    channel: {
+      type: String,
+      enum: ["SMS", "WHATSAPP", "PUSH", "EMAIL"],
+      default: "PUSH",
+      index: true,
+    },
     status: {
       type: String,
-      enum: ["PENDING", "SENT", "FAILED"],
+      enum: ["PENDING", "SENT", "FAILED", "READ"],
       default: "PENDING",
       index: true,
     },
+    metadata: { type: Schema.Types.Mixed, default: {} },
     errorMessage: { type: String },
   },
   { timestamps: true }
@@ -31,5 +40,3 @@ const NotificationSchema = new Schema<INotification>(
 export const Notification: Model<INotification> =
   mongoose.models.Notification ||
   mongoose.model<INotification>("Notification", NotificationSchema);
-
-

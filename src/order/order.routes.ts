@@ -37,8 +37,10 @@ router.post(
 router.get(
   "/my",
   requireAuth,
-  requireRole(["PATIENT"]),
   async (req, res) => {
+    // Allow any authenticated user to view their own orders
+    // The patientId is taken from the JWT token (req.user.sub)
+    // This works for PATIENT role users or any user querying their own data
     const orders = await Order.find({ patientId: req.user!.sub })
       .sort({ createdAt: -1 })
       .limit(50);
@@ -73,6 +75,7 @@ router.patch(
     );
     
     if (order) {
+      // Emit activity (this will also emit order:update Socket.IO event)
       await createActivity(
         "ORDER_STATUS_UPDATED",
         "Order Status Updated",
@@ -89,14 +92,30 @@ router.patch(
   }
 );
 
-// Get orders by patientId (for testing without auth - remove in production)
-router.get("/", async (req, res) => {
-  const { patientId } = req.query;
-  if (patientId) {
-    const orders = await Order.find({ patientId }).sort({ createdAt: -1 }).limit(50);
-    return res.json(orders);
+// Get orders by patientId (with auth - for mobile app compatibility)
+router.get(
+  "/",
+  requireAuth,
+  async (req, res) => {
+    const { patientId } = req.query;
+    
+    // If patientId is provided and matches logged-in user, allow it
+    // Otherwise, only allow if user is SUPER_ADMIN or PHARMACY_STAFF
+    if (patientId && req.user!.sub === patientId) {
+      const orders = await Order.find({ patientId }).sort({ createdAt: -1 }).limit(50);
+      return res.json(orders);
+    }
+    
+    // For pharmacy staff or admin, allow querying by patientId
+    if (req.user!.role === "PHARMACY_STAFF" || req.user!.role === "SUPER_ADMIN") {
+      const filter: any = {};
+      if (patientId) filter.patientId = patientId;
+      const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(100);
+      return res.json(orders);
+    }
+    
+    // Default: return empty array if no access
+    res.json([]);
   }
-  res.json([]);
-});
-
+);
 

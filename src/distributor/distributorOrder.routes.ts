@@ -4,6 +4,36 @@ import { createActivity } from "../activity/activity.service";
 
 export const router = Router();
 
+// Create distributor order manually (in addition to auto-creation)
+router.post("/", async (req, res) => {
+  const { pharmacyId, distributorId, medicineName, quantity } = req.body;
+
+  if (!pharmacyId || !distributorId || !medicineName || !quantity) {
+    return res.status(400).json({ message: "Missing required fields: pharmacyId, distributorId, medicineName, quantity" });
+  }
+
+  const order = await DistributorOrder.create({
+    pharmacyId,
+    distributorId,
+    medicineName,
+    quantity,
+    status: "PENDING",
+  });
+
+  await createActivity(
+    "DISTRIBUTOR_ORDER_CREATED",
+    "Distributor Order Created",
+    `Manual order created for ${medicineName} (${quantity} units) to Pharmacy ${pharmacyId}`,
+    {
+      pharmacyId,
+      distributorId,
+      metadata: { orderId: order._id.toString(), medicineName, quantity },
+    }
+  );
+
+  res.status(201).json(order);
+});
+
 // Distributor views orders assigned to them
 router.get("/", async (req, res) => {
   const { distributorId, status } = req.query;

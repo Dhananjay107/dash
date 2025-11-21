@@ -73,6 +73,26 @@ router.post("/login", async (req, res) => {
   });
 });
 
+// Public endpoint to check if email is admin/super admin (for login page)
+router.get("/check-role/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const user = await User.findOne({ email }).select("role isActive").lean();
+    if (!user) {
+      return res.json({ isAdmin: false, role: null, exists: false });
+    }
+    const isAdmin = user.role === "SUPER_ADMIN" || user.role === "HOSPITAL_ADMIN";
+    res.json({ 
+      isAdmin, 
+      role: user.role, 
+      exists: true,
+      isActive: user.isActive 
+    });
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // Public endpoint to get users by role (for doctor listing, etc.)
 router.get("/by-role/:role", async (req, res) => {
   const { role } = req.params;
@@ -103,4 +123,110 @@ router.get(
   }
 );
 
+// Get single user by ID
+router.get(
+  "/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN", "DOCTOR", "PHARMACY_STAFF"]),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.params.id).select("-passwordHash");
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Users can only view their own profile unless they're admin
+      if (req.user?.role !== "SUPER_ADMIN" && req.user?.role !== "HOSPITAL_ADMIN") {
+        if (req.user?.sub !== req.params.id) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+      
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message || "Failed to fetch user" });
+    }
+  }
+);
 
+// Update User
+router.patch(
+  "/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const { name, email, phone, role, hospitalId, pharmacyId, distributorId, isActive } = req.body;
+      const update: any = {};
+      
+      if (name !== undefined) update.name = name;
+      if (email !== undefined) update.email = email;
+      if (phone !== undefined) update.phone = phone;
+      if (role !== undefined) update.role = role;
+      if (hospitalId !== undefined) update.hospitalId = hospitalId;
+      if (pharmacyId !== undefined) update.pharmacyId = pharmacyId;
+      if (distributorId !== undefined) update.distributorId = distributorId;
+      if (isActive !== undefined) update.isActive = isActive;
+
+      const user = await User.findByIdAndUpdate(
+        req.params.id,
+        { $set: update },
+        { new: true, runValidators: true }
+      );
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      await createActivity(
+        "USER_UPDATED",
+        "User Updated",
+        `User ${user.name} (${user.email}) was updated`,
+        {
+          userId: user.id,
+          metadata: { role: user.role },
+        }
+      );
+
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Delete User
+router.delete(
+  "/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.params.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Prevent deleting SUPER_ADMIN users
+      if (user.role === "SUPER_ADMIN" && req.user?.role !== "SUPER_ADMIN") {
+        return res.status(403).json({ message: "Only SUPER_ADMIN can delete SUPER_ADMIN users" });
+      }
+
+      await User.findByIdAndDelete(req.params.id);
+
+      await createActivity(
+        "USER_DELETED",
+        "User Deleted",
+        `User ${user.name} (${user.email}) was deleted`,
+        {
+          userId: user.id,
+          metadata: { role: user.role },
+        }
+      );
+
+      res.json({ message: "User deleted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message || "Failed to delete user" });
+    }
+  }
+);

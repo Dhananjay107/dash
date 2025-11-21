@@ -3,6 +3,7 @@ import { Hospital } from "./hospital.model";
 import { Pharmacy } from "./pharmacy.model";
 import { Distributor } from "./distributor.model";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
+import { createActivity } from "../activity/activity.service";
 
 export const router = Router();
 
@@ -10,9 +11,20 @@ export const router = Router();
 router.post(
   "/hospitals",
   requireAuth,
-  requireRole(["SUPER_ADMIN"]),
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     const hospital = await Hospital.create(req.body);
+    
+    await createActivity(
+      "HOSPITAL_CREATED",
+      "Hospital Created",
+      `New hospital created: ${hospital.name}`,
+      {
+        hospitalId: hospital._id.toString(),
+        metadata: { name: hospital.name, address: hospital.address },
+      }
+    );
+    
     res.status(201).json(hospital);
   }
 );
@@ -20,10 +32,26 @@ router.post(
 router.get(
   "/hospitals",
   requireAuth,
-  requireRole(["SUPER_ADMIN"]),
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
     const hospitals = await Hospital.find().sort({ createdAt: -1 });
     res.json(hospitals);
+  }
+);
+
+router.get(
+  "/hospitals/:id",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const hospital = await Hospital.findById(req.params.id);
+      if (!hospital) {
+        return res.status(404).json({ message: "Hospital not found" });
+      }
+      res.json(hospital);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -34,6 +62,17 @@ router.post(
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     const pharmacy = await Pharmacy.create(req.body);
+    
+    await createActivity(
+      "PHARMACY_CREATED",
+      "Pharmacy Created",
+      `New pharmacy created: ${pharmacy.name}`,
+      {
+        pharmacyId: pharmacy._id.toString(),
+        metadata: { name: pharmacy.name, address: pharmacy.address },
+      }
+    );
+    
     res.status(201).json(pharmacy);
   }
 );
@@ -48,13 +87,40 @@ router.get(
   }
 );
 
+router.get(
+  "/pharmacies/:id",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const pharmacy = await Pharmacy.findById(req.params.id);
+      if (!pharmacy) {
+        return res.status(404).json({ message: "Pharmacy not found" });
+      }
+      res.json(pharmacy);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
 // Distributors
 router.post(
   "/distributors",
   requireAuth,
-  requireRole(["SUPER_ADMIN"]),
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     const distributor = await Distributor.create(req.body);
+    
+    await createActivity(
+      "DISTRIBUTOR_CREATED",
+      "Distributor Created",
+      `New distributor created: ${distributor.name}`,
+      {
+        distributorId: distributor._id.toString(),
+        metadata: { name: distributor.name, address: distributor.address },
+      }
+    );
+    
     res.status(201).json(distributor);
   }
 );
@@ -62,11 +128,212 @@ router.post(
 router.get(
   "/distributors",
   requireAuth,
-  requireRole(["SUPER_ADMIN"]),
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
     const distributors = await Distributor.find().sort({ createdAt: -1 });
     res.json(distributors);
   }
 );
 
+router.get(
+  "/distributors/:id",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const distributor = await Distributor.findById(req.params.id);
+      if (!distributor) {
+        return res.status(404).json({ message: "Distributor not found" });
+      }
+      res.json(distributor);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Update Hospital
+router.patch(
+  "/hospitals/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const hospital = await Hospital.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+      );
+      if (!hospital) {
+        return res.status(404).json({ message: "Hospital not found" });
+      }
+      
+      await createActivity(
+        "HOSPITAL_UPDATED",
+        "Hospital Updated",
+        `Hospital updated: ${hospital.name}`,
+        {
+          hospitalId: hospital._id.toString(),
+          metadata: { name: hospital.name },
+        }
+      );
+      
+      res.json(hospital);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Delete Hospital
+router.delete(
+  "/hospitals/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const hospital = await Hospital.findByIdAndDelete(req.params.id);
+      if (!hospital) {
+        return res.status(404).json({ message: "Hospital not found" });
+      }
+      
+      await createActivity(
+        "HOSPITAL_DELETED",
+        "Hospital Deleted",
+        `Hospital deleted: ${hospital.name}`,
+        {
+          hospitalId: hospital._id.toString(),
+          metadata: { name: hospital.name },
+        }
+      );
+      
+      res.json({ message: "Hospital deleted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Update Pharmacy
+router.patch(
+  "/pharmacies/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const pharmacy = await Pharmacy.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+      );
+      if (!pharmacy) {
+        return res.status(404).json({ message: "Pharmacy not found" });
+      }
+      
+      await createActivity(
+        "PHARMACY_UPDATED",
+        "Pharmacy Updated",
+        `Pharmacy updated: ${pharmacy.name}`,
+        {
+          pharmacyId: pharmacy._id.toString(),
+          metadata: { name: pharmacy.name },
+        }
+      );
+      
+      res.json(pharmacy);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Delete Pharmacy
+router.delete(
+  "/pharmacies/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const pharmacy = await Pharmacy.findByIdAndDelete(req.params.id);
+      if (!pharmacy) {
+        return res.status(404).json({ message: "Pharmacy not found" });
+      }
+      
+      await createActivity(
+        "PHARMACY_DELETED",
+        "Pharmacy Deleted",
+        `Pharmacy deleted: ${pharmacy.name}`,
+        {
+          pharmacyId: pharmacy._id.toString(),
+          metadata: { name: pharmacy.name },
+        }
+      );
+      
+      res.json({ message: "Pharmacy deleted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Update Distributor
+router.patch(
+  "/distributors/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const distributor = await Distributor.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+      );
+      if (!distributor) {
+        return res.status(404).json({ message: "Distributor not found" });
+      }
+      
+      await createActivity(
+        "DISTRIBUTOR_UPDATED",
+        "Distributor Updated",
+        `Distributor updated: ${distributor.name}`,
+        {
+          distributorId: distributor._id.toString(),
+          metadata: { name: distributor.name },
+        }
+      );
+      
+      res.json(distributor);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
+
+// Delete Distributor
+router.delete(
+  "/distributors/:id",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
+  async (req, res) => {
+    try {
+      const distributor = await Distributor.findByIdAndDelete(req.params.id);
+      if (!distributor) {
+        return res.status(404).json({ message: "Distributor not found" });
+      }
+      
+      await createActivity(
+        "DISTRIBUTOR_DELETED",
+        "Distributor Deleted",
+        `Distributor deleted: ${distributor.name}`,
+        {
+          distributorId: distributor._id.toString(),
+          metadata: { name: distributor.name },
+        }
+      );
+      
+      res.json({ message: "Distributor deleted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+);
 

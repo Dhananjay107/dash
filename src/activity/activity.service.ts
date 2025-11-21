@@ -7,6 +7,10 @@ export function setSocketIO(io: SocketIOServer) {
   ioInstance = io;
 }
 
+export function getSocketIO(): SocketIOServer | null {
+  return ioInstance;
+}
+
 export async function createActivity(
   type: ActivityType,
   title: string,
@@ -38,6 +42,51 @@ export async function createActivity(
       createdAt: activity.createdAt,
       ...metadata,
     });
+
+    // Emit specific events as mentioned in README
+    if (activity.type.includes("APPOINTMENT")) {
+      ioInstance.emit("appointment:update", {
+        id: activity._id,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        createdAt: activity.createdAt,
+        ...metadata,
+      });
+    }
+    
+    if (activity.type.includes("PRESCRIPTION")) {
+      ioInstance.emit("prescription:new", {
+        id: activity._id,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        createdAt: activity.createdAt,
+        ...metadata,
+      });
+    }
+    
+    if (activity.type.includes("INVENTORY")) {
+      ioInstance.emit("inventory:alert", {
+        id: activity._id,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        createdAt: activity.createdAt,
+        ...metadata,
+      });
+    }
+    
+    if (activity.type.includes("ORDER")) {
+      ioInstance.emit("order:update", {
+        id: activity._id,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        createdAt: activity.createdAt,
+        ...metadata,
+      });
+    }
   }
 
   return activity;

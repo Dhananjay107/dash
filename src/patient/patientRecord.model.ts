@@ -31,7 +31,7 @@ export interface IPatientRecord extends Document {
 
 const PatientRecordSchema = new Schema<IPatientRecord>(
   {
-    patientId: { type: String, required: true, index: true },
+    patientId: { type: String, required: true },
     doctorId: { type: String, index: true },
     hospitalId: { type: String, index: true },
     diagnosis: { type: [String], default: [] },
@@ -66,7 +66,8 @@ const PatientRecordSchema = new Schema<IPatientRecord>(
 );
 
 // Ensure one record per patient (upsert pattern)
-PatientRecordSchema.index({ patientId: 1 }, { unique: true });
+// Use custom name to avoid conflicts with existing indexes
+PatientRecordSchema.index({ patientId: 1 }, { unique: true, name: "patientId_unique" });
 
 export const PatientRecord: Model<IPatientRecord> =
   mongoose.models.PatientRecord ||

@@ -39,6 +39,9 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true }
 );
 
+// Text search index for full-text search
+UserSchema.index({ name: "text", email: "text" });
+
 export const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>("User", UserSchema);
 
 

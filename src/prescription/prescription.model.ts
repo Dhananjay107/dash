@@ -40,6 +40,9 @@ const PrescriptionSchema = new Schema<IPrescription>(
   { timestamps: true }
 );
 
+// Text search index for full-text search
+PrescriptionSchema.index({ "items.medicineName": "text", notes: "text" });
+
 export const Prescription: Model<IPrescription> =
   mongoose.models.Prescription || mongoose.model<IPrescription>("Prescription", PrescriptionSchema);
 
