@@ -1,5 +1,4 @@
 import { Notification } from "./notification.model";
-import { getSocketIO } from "../activity/activity.service";
 import nodemailer from "nodemailer";
 
 export interface NotificationData {
@@ -148,12 +147,7 @@ async function sendPushNotification(userId: string, title: string, body: string)
       return data.data?.status === "ok";
     }
 
-    // Fallback: Socket.IO push (FREE - already implemented)
-    const io = getSocketIO();
-    if (io) {
-      io.to(userId).emit("push_notification", { title, body });
-    }
-    
+    // Push notifications are stored in database and can be fetched via API
     console.log(`[Push] To: ${userId}, Title: ${title}, Body: ${body}`);
     return true;
   } catch (error) {
@@ -186,17 +180,7 @@ export async function createNotification(data: NotificationData): Promise<any> {
     } else if (data.channel === "PUSH" && data.userId) {
       sent = await sendPushNotification(data.userId, data.title, data.message);
     } else {
-      // Default: Use Socket.IO push (FREE)
-      const io = getSocketIO();
-      if (io && data.userId) {
-        io.to(data.userId).emit("notification", {
-          id: notification._id,
-          type: notification.type,
-          title: notification.title,
-          message: notification.message,
-          createdAt: notification.createdAt,
-        });
-      }
+      // Default: Store notification in database (can be fetched via API)
       sent = true;
     }
 
@@ -209,18 +193,7 @@ export async function createNotification(data: NotificationData): Promise<any> {
     await notification.save();
   }
 
-  // Always emit via Socket.IO for real-time updates (FREE)
-  const io = getSocketIO();
-  if (io && data.userId) {
-    io.to(data.userId).emit("notification", {
-      id: notification._id,
-      type: notification.type,
-      title: notification.title,
-      message: notification.message,
-      createdAt: notification.createdAt,
-    });
-  }
-
+  // Notification is stored in database and can be fetched via API
   return notification;
 }
 
@@ -243,7 +216,7 @@ export async function sendAppointmentReminder(
     channel: "WHATSAPP",
   });
 
-  // Also send push notification (FREE via Socket.IO)
+  // Also send push notification (stored in database)
   await createNotification({
     userId: patientId,
     type: "APPOINTMENT_REMINDER",

@@ -8,6 +8,8 @@ export interface IPrescriptionItem {
   notes?: string;
 }
 
+export type ReportStatus = "PENDING" | "FORMATTED" | "FINALIZED";
+
 export interface IPrescription extends Document {
   appointmentId: string;
   doctorId: string;
@@ -15,6 +17,12 @@ export interface IPrescription extends Document {
   pharmacyId?: string;
   items: IPrescriptionItem[];
   notes?: string;
+  // Report workflow fields
+  reportStatus: ReportStatus;
+  formattedReport?: string; // HTML/PDF content of formatted report
+  formattedAt?: Date;
+  finalizedAt?: Date;
+  finalizedBy?: string; // Admin user ID who finalized
 }
 
 const PrescriptionItemSchema = new Schema<IPrescriptionItem>(
@@ -36,6 +44,17 @@ const PrescriptionSchema = new Schema<IPrescription>(
     pharmacyId: { type: String },
     items: { type: [PrescriptionItemSchema], default: [] },
     notes: { type: String },
+    // Report workflow fields
+    reportStatus: {
+      type: String,
+      enum: ["PENDING", "FORMATTED", "FINALIZED"],
+      default: "PENDING",
+      index: true,
+    },
+    formattedReport: { type: String },
+    formattedAt: { type: Date },
+    finalizedAt: { type: Date },
+    finalizedBy: { type: String },
   },
   { timestamps: true }
 );

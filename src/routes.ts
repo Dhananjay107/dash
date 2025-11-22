@@ -14,6 +14,7 @@ import { router as pricingRouter } from "./pricing/pricing.routes";
 import { router as conversationRouter } from "./conversation/conversation.routes";
 import { router as templateRouter } from "./template/template.routes";
 import { router as publicRouter } from "./public/public.routes";
+import { router as reportRequestRouter } from "./reportRequest/reportRequest.routes";
 
 export function registerRoutes(app: Express) {
   // Public API routes (no authentication required)
@@ -34,6 +35,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/pricing", pricingRouter);
   app.use("/api/conversations", conversationRouter);
   app.use("/api/templates", templateRouter);
+  app.use("/api/report-requests", reportRequestRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

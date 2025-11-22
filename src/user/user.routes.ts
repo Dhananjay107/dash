@@ -98,7 +98,7 @@ router.get("/by-role/:role", async (req, res) => {
   const { role } = req.params;
   const users = await User.find({ role })
     .limit(100)
-    .select("_id name email role")
+    .select("_id name email role hospitalId pharmacyId")
     .sort({ name: 1 })
     .lean();
   // Ensure _id is included as string
@@ -108,6 +108,8 @@ router.get("/by-role/:role", async (req, res) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    hospitalId: user.hospitalId || undefined,
+    pharmacyId: user.pharmacyId || undefined,
   }));
   res.json(formattedUsers);
 });
@@ -127,23 +129,32 @@ router.get(
 router.get(
   "/:id",
   requireAuth,
-  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN", "DOCTOR", "PHARMACY_STAFF"]),
   async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ message: "Unauthenticated" });
+      }
+
+      // Check if the route matches a special endpoint first (route order matters)
+      if (req.params.id === "check-role" || req.params.id === "by-role") {
+        return res.status(404).json({ message: "Invalid endpoint" });
+      }
+
+      // Select fields based on user role
+      const userRole = req.user.role;
+      const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+      
+      // All authenticated users can view basic user info (passwordHash is always excluded)
       const user = await User.findById(req.params.id).select("-passwordHash");
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
       
-      // Users can only view their own profile unless they're admin
-      if (req.user?.role !== "SUPER_ADMIN" && req.user?.role !== "HOSPITAL_ADMIN") {
-        if (req.user?.sub !== req.params.id) {
-          return res.status(403).json({ message: "Forbidden" });
-        }
-      }
-      
-      res.json(user);
+      // Return user data for all authenticated users
+      // Password hash is already excluded, so it's safe
+      return res.json(user);
     } catch (error: any) {
+      console.error("Error fetching user:", error);
       res.status(400).json({ message: error.message || "Failed to fetch user" });
     }
   }

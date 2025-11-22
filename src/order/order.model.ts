@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
-export type OrderStatus = "PENDING" | "ACCEPTED" | "PACKED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+export type OrderStatus = "PENDING" | "ORDER_RECEIVED" | "MEDICINE_RECEIVED" | "SENT_TO_PHARMACY" | "ACCEPTED" | "PACKED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 export interface IOrderItem {
   prescriptionItemId?: string;
@@ -17,6 +17,12 @@ export interface IOrder extends Document {
   deliveryType: "DELIVERY" | "PICKUP";
   address?: string;
   deliveryCharge?: number;
+  deliveryPersonId?: string; // ID of delivery person assigned
+  deliveryPersonName?: string; // Name of delivery person
+  deliveryPersonPhone?: string; // Contact number of delivery person
+  estimatedDeliveryTime?: Date; // Estimated delivery time
+  deliveredAt?: Date; // Actual delivery time
+  deliveryNotes?: string; // Notes about delivery
 }
 
 const OrderItemSchema = new Schema<IOrderItem>(
@@ -36,7 +42,7 @@ const OrderSchema = new Schema<IOrder>(
     items: { type: [OrderItemSchema], default: [] },
     status: {
       type: String,
-      enum: ["PENDING", "ACCEPTED", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
+      enum: ["PENDING", "ORDER_RECEIVED", "MEDICINE_RECEIVED", "SENT_TO_PHARMACY", "ACCEPTED", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"],
       default: "PENDING",
       index: true,
     },
@@ -47,6 +53,15 @@ const OrderSchema = new Schema<IOrder>(
     },
     address: { type: String },
     deliveryCharge: { type: Number },
+    deliveryPersonId: { type: String },
+    deliveryPersonName: { type: String },
+    deliveryPersonPhone: { type: String },
+    estimatedDeliveryTime: { type: Date },
+    deliveredAt: { type: Date },
+    deliveryNotes: { type: String },
+    adminApprovedAt: { type: Date },
+    medicineReceivedAt: { type: Date },
+    sentToPharmacyAt: { type: Date },
   },
   { timestamps: true }
 );

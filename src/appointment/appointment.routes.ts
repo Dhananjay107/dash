@@ -160,7 +160,7 @@ router.patch("/:id/status", validateRequired(["status"]), async (req, res) => {
     }
   }
 
-  // Emit activity (this will also emit appointment:update Socket.IO event)
+  // Create activity (will be fetched via polling on frontend)
   await createActivity(
     "APPOINTMENT_STATUS_UPDATED",
     "Appointment Status Updated",
