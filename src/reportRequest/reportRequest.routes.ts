@@ -2,6 +2,8 @@ import { Router } from "express";
 import { ReportRequest } from "./reportRequest.model";
 import { requireAuth } from "../shared/middleware/auth";
 import { AppError } from "../shared/middleware/errorHandler";
+import { socketEvents } from "../socket/socket.server";
+import { User } from "../user/user.model";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -48,6 +50,30 @@ router.post("/", requireAuth, async (req, res) => {
       description,
       status: "PENDING",
     });
+
+    // Fetch doctor name for notification
+    const doctor = await User.findById(doctorId).select("name").lean();
+    const doctorName = doctor?.name || "Doctor";
+
+    // Ensure patientId is a string
+    const patientIdStr = patientId.toString();
+
+    // Emit Socket.IO event to patient
+    const eventData = {
+      requestId: reportRequest._id.toString(),
+      doctorId: doctorId.toString(),
+      doctorName,
+      reportType,
+      description,
+      requestedAt: reportRequest.requestedAt,
+      patientId: patientIdStr,
+    };
+
+    console.log(`📋 Report request created: ${reportRequest._id}`);
+    console.log(`📋 Emitting Socket.IO event to patient: ${patientIdStr}`);
+    console.log(`📋 Event data:`, eventData);
+
+    socketEvents.emitToUser(patientIdStr, "report:requested", eventData);
 
     res.status(201).json(reportRequest);
   } catch (error: any) {
@@ -155,6 +181,16 @@ router.patch(
 
       await reportRequest.save();
 
+      // Emit Socket.IO event to doctor
+      socketEvents.emitToUser(reportRequest.doctorId, "report:uploaded", {
+        requestId: reportRequest._id.toString(),
+        patientId: reportRequest.patientId,
+        reportType: reportRequest.reportType,
+        fileUrl: reportRequest.fileUrl,
+        fileName: reportRequest.fileName,
+        uploadedAt: reportRequest.uploadedAt,
+      });
+
       res.json(reportRequest);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to upload report" });
@@ -194,6 +230,13 @@ router.patch("/:id/review", requireAuth, async (req, res) => {
     reportRequest.status = "REVIEWED";
     await reportRequest.save();
 
+    // Emit Socket.IO event to patient
+    socketEvents.emitToUser(reportRequest.patientId, "report:reviewed", {
+      requestId: reportRequest._id.toString(),
+      doctorId: reportRequest.doctorId,
+      reviewedAt: new Date(),
+    });
+
     res.json(reportRequest);
   } catch (error: any) {
     res.status(500).json({ message: error.message || "Failed to review report" });
@@ -230,7 +273,23 @@ router.delete("/:id", requireAuth, async (req, res) => {
       fs.unlinkSync(reportRequest.fileUrl);
     }
 
-    await ReportRequest.findByIdAndDelete(id);
+    // Delete the report request and verify deletion
+    const deleteResult = await ReportRequest.deleteOne({ _id: id });
+    
+    if (deleteResult.deletedCount === 0) {
+      return res.status(500).json({ message: "Failed to delete report request" });
+    }
+
+    // Verify deletion
+    const verifyDelete = await ReportRequest.findById(id);
+    if (verifyDelete) {
+      // Try force delete using collection
+      await ReportRequest.collection.deleteOne({ _id: reportRequest._id });
+      const verifyAgain = await ReportRequest.findById(id);
+      if (verifyAgain) {
+        return res.status(500).json({ message: "Failed to delete report request from database" });
+      }
+    }
 
     res.json({ message: "Report request deleted" });
   } catch (error: any) {

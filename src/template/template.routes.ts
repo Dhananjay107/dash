@@ -135,11 +135,38 @@ router.delete(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
-    const template = await Template.findByIdAndDelete(req.params.id);
-    if (!template) {
-      throw new AppError("Template not found", 404);
+    try {
+      const templateId = req.params.id;
+      const template = await Template.findById(templateId);
+      if (!template) {
+        throw new AppError("Template not found", 404);
+      }
+
+      // Delete the template and verify deletion
+      const deleteResult = await Template.deleteOne({ _id: templateId });
+      
+      if (deleteResult.deletedCount === 0) {
+        throw new AppError("Failed to delete template", 500);
+      }
+
+      // Verify deletion
+      const verifyDelete = await Template.findById(templateId);
+      if (verifyDelete) {
+        // Try force delete using collection
+        await Template.collection.deleteOne({ _id: template._id });
+        const verifyAgain = await Template.findById(templateId);
+        if (verifyAgain) {
+          throw new AppError("Failed to delete template from database", 500);
+        }
+      }
+
+      res.json({ message: "Template deleted" });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError(error.message || "Failed to delete template", 500);
     }
-    res.json({ message: "Template deleted" });
   }
 );
 

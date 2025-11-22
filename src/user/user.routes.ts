@@ -213,7 +213,8 @@ router.delete(
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     try {
-      const user = await User.findById(req.params.id);
+      const userId = req.params.id;
+      const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -223,15 +224,39 @@ router.delete(
         return res.status(403).json({ message: "Only SUPER_ADMIN can delete SUPER_ADMIN users" });
       }
 
-      await User.findByIdAndDelete(req.params.id);
+      // Store user info before deletion
+      const userInfo = {
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        userId: user._id.toString(),
+      };
+
+      // Delete the user and verify deletion
+      const deleteResult = await User.deleteOne({ _id: userId });
+      
+      if (deleteResult.deletedCount === 0) {
+        return res.status(500).json({ message: "Failed to delete user" });
+      }
+
+      // Verify deletion
+      const verifyDelete = await User.findById(userId);
+      if (verifyDelete) {
+        // Try force delete using collection
+        await User.collection.deleteOne({ _id: user._id });
+        const verifyAgain = await User.findById(userId);
+        if (verifyAgain) {
+          return res.status(500).json({ message: "Failed to delete user from database" });
+        }
+      }
 
       await createActivity(
         "USER_DELETED",
         "User Deleted",
-        `User ${user.name} (${user.email}) was deleted`,
+        `User ${userInfo.name} (${userInfo.email}) was deleted`,
         {
-          userId: user.id,
-          metadata: { role: user.role },
+          userId: userInfo.userId,
+          metadata: { role: userInfo.role },
         }
       );
 

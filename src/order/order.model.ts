@@ -23,6 +23,8 @@ export interface IOrder extends Document {
   estimatedDeliveryTime?: Date; // Estimated delivery time
   deliveredAt?: Date; // Actual delivery time
   deliveryNotes?: string; // Notes about delivery
+  cancellationReason?: string; // Reason for cancellation
+  cancelledAt?: Date; // When order was cancelled
 }
 
 const OrderItemSchema = new Schema<IOrderItem>(
@@ -59,6 +61,8 @@ const OrderSchema = new Schema<IOrder>(
     estimatedDeliveryTime: { type: Date },
     deliveredAt: { type: Date },
     deliveryNotes: { type: String },
+    cancellationReason: { type: String },
+    cancelledAt: { type: Date },
     adminApprovedAt: { type: Date },
     medicineReceivedAt: { type: Date },
     sentToPharmacyAt: { type: Date },

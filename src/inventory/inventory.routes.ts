@@ -234,22 +234,46 @@ router.delete(
   requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]),
   async (req, res) => {
     try {
-      const item = await InventoryItem.findById(req.params.id);
+      const itemId = req.params.id;
+      const item = await InventoryItem.findById(itemId);
       if (!item) {
         return res.status(404).json({ message: "Inventory item not found" });
       }
 
-      await InventoryItem.findByIdAndDelete(req.params.id);
+      // Store item info before deletion
+      const itemInfo = {
+        medicineName: item.medicineName,
+        pharmacyId: item.pharmacyId,
+        itemId: item._id.toString(),
+      };
+
+      // Delete the item and verify deletion
+      const deleteResult = await InventoryItem.deleteOne({ _id: itemId });
+      
+      if (deleteResult.deletedCount === 0) {
+        return res.status(500).json({ message: "Failed to delete inventory item" });
+      }
+
+      // Verify deletion
+      const verifyDelete = await InventoryItem.findById(itemId);
+      if (verifyDelete) {
+        // Try force delete using collection
+        await InventoryItem.collection.deleteOne({ _id: item._id });
+        const verifyAgain = await InventoryItem.findById(itemId);
+        if (verifyAgain) {
+          return res.status(500).json({ message: "Failed to delete inventory item from database" });
+        }
+      }
 
       await createActivity(
         "INVENTORY_DELETED",
         "Inventory Deleted",
-        `Inventory item ${item.medicineName} deleted from Pharmacy ${item.pharmacyId}`,
+        `Inventory item ${itemInfo.medicineName} deleted from Pharmacy ${itemInfo.pharmacyId}`,
         {
-          pharmacyId: item.pharmacyId,
+          pharmacyId: itemInfo.pharmacyId,
           metadata: { 
-            medicineName: item.medicineName,
-            itemId: item._id.toString(),
+            medicineName: itemInfo.medicineName,
+            itemId: itemInfo.itemId,
           },
         }
       );

@@ -16,6 +16,7 @@ export interface IPrescription extends Document {
   patientId: string;
   pharmacyId?: string;
   items: IPrescriptionItem[];
+  suggestions?: string; // Doctor's suggestions/advice
   notes?: string;
   // Report workflow fields
   reportStatus: ReportStatus;
@@ -43,6 +44,7 @@ const PrescriptionSchema = new Schema<IPrescription>(
     patientId: { type: String, required: true, index: true },
     pharmacyId: { type: String },
     items: { type: [PrescriptionItemSchema], default: [] },
+    suggestions: { type: String }, // Doctor's suggestions/advice
     notes: { type: String },
     // Report workflow fields
     reportStatus: {

@@ -60,11 +60,35 @@ router.delete(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
-    const pricing = await Pricing.findByIdAndDelete(req.params.id);
-    if (!pricing) {
-      return res.status(404).json({ message: "Pricing rule not found" });
+    try {
+      const pricingId = req.params.id;
+      const pricing = await Pricing.findById(pricingId);
+      if (!pricing) {
+        return res.status(404).json({ message: "Pricing rule not found" });
+      }
+
+      // Delete the pricing rule and verify deletion
+      const deleteResult = await Pricing.deleteOne({ _id: pricingId });
+      
+      if (deleteResult.deletedCount === 0) {
+        return res.status(500).json({ message: "Failed to delete pricing rule" });
+      }
+
+      // Verify deletion
+      const verifyDelete = await Pricing.findById(pricingId);
+      if (verifyDelete) {
+        // Try force delete using collection
+        await Pricing.collection.deleteOne({ _id: pricing._id });
+        const verifyAgain = await Pricing.findById(pricingId);
+        if (verifyAgain) {
+          return res.status(500).json({ message: "Failed to delete pricing rule from database" });
+        }
+      }
+
+      res.json({ message: "Pricing rule deleted" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message || "Failed to delete pricing rule" });
     }
-    res.json({ message: "Pricing rule deleted" });
   }
 );
 

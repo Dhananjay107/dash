@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Order } from "./order.model";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
 import { createActivity } from "../activity/activity.service";
+import { socketEvents } from "../socket/socket.server";
 
 export const router = Router();
 
@@ -39,6 +40,23 @@ router.post(
           metadata: { orderId: order._id.toString(), itemCount: order.items.length },
         }
       );
+
+      // Emit Socket.IO events
+      socketEvents.emitToAdmin("order:created", {
+        orderId: order._id.toString(),
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+        status: order.status,
+        itemCount: order.items.length,
+        createdAt: order.createdAt,
+      });
+      socketEvents.emitToUser(order.patientId, "order:created", {
+        orderId: order._id.toString(),
+        pharmacyId: order.pharmacyId,
+        status: order.status,
+        itemCount: order.items.length,
+        createdAt: order.createdAt,
+      });
       
       res.status(201).json(order);
     } catch (error: any) {
@@ -122,6 +140,19 @@ router.patch(
           metadata: { orderId: order._id.toString(), status: "ORDER_RECEIVED" },
         }
       );
+
+      // Emit Socket.IO events
+      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "ORDER_RECEIVED",
+        pharmacyId: order.pharmacyId,
+      });
+      socketEvents.emitToAdmin("order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "ORDER_RECEIVED",
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+      });
       
       res.json(updated);
     } catch (error: any) {
@@ -166,6 +197,19 @@ router.patch(
           metadata: { orderId: order._id.toString(), status: "MEDICINE_RECEIVED" },
         }
       );
+
+      // Emit Socket.IO events
+      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "MEDICINE_RECEIVED",
+        pharmacyId: order.pharmacyId,
+      });
+      socketEvents.emitToAdmin("order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "MEDICINE_RECEIVED",
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+      });
       
       res.json(updated);
     } catch (error: any) {
@@ -210,6 +254,25 @@ router.patch(
           metadata: { orderId: order._id.toString(), status: "SENT_TO_PHARMACY" },
         }
       );
+
+      // Emit Socket.IO events
+      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "SENT_TO_PHARMACY",
+        pharmacyId: order.pharmacyId,
+      });
+      socketEvents.emitToRole("PHARMACY_STAFF", "order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "SENT_TO_PHARMACY",
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+      });
+      socketEvents.emitToAdmin("order:statusUpdated", {
+        orderId: order._id.toString(),
+        status: "SENT_TO_PHARMACY",
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+      });
       
       res.json(updated);
     } catch (error: any) {
@@ -285,6 +348,23 @@ router.patch(
           },
         }
       );
+
+      // Emit Socket.IO events
+      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
+        orderId: order._id.toString(),
+        status,
+        pharmacyId: order.pharmacyId,
+        deliveryPersonName: updated?.deliveryPersonName,
+        estimatedDeliveryTime: updated?.estimatedDeliveryTime,
+        deliveredAt: updated?.deliveredAt,
+      });
+      socketEvents.emitToAdmin("order:statusUpdated", {
+        orderId: order._id.toString(),
+        status,
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+        deliveryPersonName: updated?.deliveryPersonName,
+      });
       
       res.json(updated);
     } catch (error: any) {
@@ -319,6 +399,76 @@ router.get(
     
     // Default: return empty array if no access
     res.json([]);
+  }
+);
+
+// Patient cancels own order
+router.patch(
+  "/:id/cancel",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { cancellationReason } = req.body;
+      const order = await Order.findById(req.params.id);
+      
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+
+      // Check if user owns the order or is admin
+      if (order.patientId !== req.user!.sub && req.user!.role !== "SUPER_ADMIN") {
+        return res.status(403).json({ message: "You can only cancel your own orders" });
+      }
+
+      // Only allow cancellation if order is not already delivered or cancelled
+      const nonCancellableStatuses = ["DELIVERED", "CANCELLED", "OUT_FOR_DELIVERY"];
+      if (nonCancellableStatuses.includes(order.status)) {
+        return res.status(400).json({ 
+          message: `Cannot cancel order. Current status: ${order.status}` 
+        });
+      }
+
+      const updated = await Order.findByIdAndUpdate(
+        req.params.id,
+        { 
+          status: "CANCELLED",
+          cancellationReason: cancellationReason || "Cancelled by patient",
+          cancelledAt: new Date(),
+        },
+        { new: true }
+      );
+
+      await createActivity(
+        "ORDER_CANCELLED",
+        "Order Cancelled",
+        `Order ${order._id.slice(-8)} cancelled by ${req.user!.role === "SUPER_ADMIN" ? "admin" : "patient"}`,
+        {
+          patientId: order.patientId,
+          pharmacyId: order.pharmacyId,
+          metadata: { 
+            orderId: order._id.toString(), 
+            cancellationReason: cancellationReason || "Cancelled by patient",
+          },
+        }
+      );
+
+      // Emit Socket.IO events
+      socketEvents.emitToUser(order.patientId, "order:cancelled", {
+        orderId: order._id.toString(),
+        status: "CANCELLED",
+        pharmacyId: order.pharmacyId,
+      });
+      socketEvents.emitToAdmin("order:cancelled", {
+        orderId: order._id.toString(),
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error cancelling order:", error);
+      res.status(500).json({ message: "Failed to cancel order", error: error.message });
+    }
   }
 );
 

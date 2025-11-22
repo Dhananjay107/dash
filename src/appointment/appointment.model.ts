@@ -8,7 +8,15 @@ export interface IAppointment extends Document {
   patientId: string;
   scheduledAt: Date;
   status: AppointmentStatus;
-  reason?: string;
+  // Patient booking details
+  patientName: string;
+  age: number;
+  address: string;
+  issue: string; // Main issue/description
+  reportFile?: string; // File path/URL if report uploaded
+  reportFileName?: string; // Original file name
+  // Legacy fields (keeping for backward compatibility)
+  reason?: string; // Deprecated - use issue instead
   channel: "PHYSICAL" | "VIDEO";
 }
 
@@ -24,7 +32,15 @@ const AppointmentSchema = new Schema<IAppointment>(
       default: "PENDING",
       index: true,
     },
-    reason: { type: String },
+    // Patient booking details
+    patientName: { type: String, required: true },
+    age: { type: Number, required: true },
+    address: { type: String, required: true },
+    issue: { type: String, required: true },
+    reportFile: { type: String }, // File path/URL
+    reportFileName: { type: String }, // Original file name
+    // Legacy fields (keeping for backward compatibility)
+    reason: { type: String }, // Deprecated - use issue instead
     channel: {
       type: String,
       enum: ["PHYSICAL", "VIDEO"],

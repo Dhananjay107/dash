@@ -3,6 +3,7 @@ import { Prescription } from "./prescription.model";
 import { createActivity } from "../activity/activity.service";
 import { validateRequired } from "../shared/middleware/validation";
 import { AppError } from "../shared/middleware/errorHandler";
+import { socketEvents } from "../socket/socket.server";
 
 export const router = Router();
 
@@ -65,6 +66,22 @@ router.post(
         },
       }
     );
+
+    // Emit Socket.IO events
+    socketEvents.emitToUser(prescription.patientId, "prescription:created", {
+      prescriptionId: prescription._id.toString(),
+      doctorId: prescription.doctorId,
+      itemCount: prescription.items.length,
+      createdAt: prescription.createdAt,
+    });
+    socketEvents.emitToAdmin("prescription:created", {
+      prescriptionId: prescription._id.toString(),
+      patientId: prescription.patientId,
+      doctorId: prescription.doctorId,
+      reportStatus: "PENDING",
+      itemCount: prescription.items.length,
+      createdAt: prescription.createdAt,
+    });
     
     res.status(201).json(prescription);
   }
@@ -447,6 +464,14 @@ router.post("/:id/generate-report", async (req, res) => {
     }
   );
 
+  // Emit Socket.IO event
+  socketEvents.emitToAdmin("prescription:formatted", {
+    prescriptionId: prescription._id.toString(),
+    patientId: prescription.patientId,
+    doctorId: prescription.doctorId,
+    reportStatus: prescription.reportStatus,
+  });
+
   res.json({ 
     rendered, 
     template: template.name, 
@@ -481,6 +506,18 @@ router.post("/:id/finalize-report", async (req, res) => {
       metadata: { prescriptionId: prescription._id.toString() },
     }
   );
+
+  // Emit Socket.IO events
+  socketEvents.emitToUser(prescription.patientId, "prescription:finalized", {
+    prescriptionId: prescription._id.toString(),
+    doctorId: prescription.doctorId,
+    finalizedAt: prescription.finalizedAt,
+  });
+  socketEvents.emitToAdmin("prescription:finalized", {
+    prescriptionId: prescription._id.toString(),
+    patientId: prescription.patientId,
+    doctorId: prescription.doctorId,
+  });
 
   res.json({ 
     prescription, 
