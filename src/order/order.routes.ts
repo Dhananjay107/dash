@@ -1,10 +1,78 @@
 import { Router } from "express";
-import { Order } from "./order.model";
+import { Order, IOrder } from "./order.model";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
 import { createActivity } from "../activity/activity.service";
 import { socketEvents } from "../socket/socket.server";
 
 export const router = Router();
+
+// Helper function to get order ID as string
+const getOrderId = (order: IOrder): string => String(order._id);
+
+// Helper function to get short order ID (last 8 chars)
+const getShortOrderId = (order: IOrder): string => String(order._id).slice(-8);
+
+// Helper function to emit order status update events
+const emitOrderStatusUpdate = (order: IOrder, status: string, additionalData?: any) => {
+  const orderId = getOrderId(order);
+  const baseData = {
+    orderId,
+    status,
+    pharmacyId: order.pharmacyId,
+    ...additionalData,
+  };
+
+  socketEvents.emitToUser(order.patientId, "order:statusUpdated", baseData);
+  socketEvents.emitToAdmin("order:statusUpdated", {
+    ...baseData,
+    patientId: order.patientId,
+  });
+
+  if (status === "SENT_TO_PHARMACY") {
+    socketEvents.emitToRole("PHARMACY_STAFF", "order:statusUpdated", {
+      ...baseData,
+      patientId: order.patientId,
+    });
+  }
+};
+
+// Helper function to emit order created events
+const emitOrderCreated = (order: IOrder) => {
+  const orderId = getOrderId(order);
+  const createdAt = (order as any).createdAt || new Date();
+  const data = {
+    orderId,
+    patientId: order.patientId,
+    pharmacyId: order.pharmacyId,
+    status: order.status,
+    itemCount: order.items.length,
+    createdAt,
+  };
+
+  socketEvents.emitToAdmin("order:created", data);
+  socketEvents.emitToUser(order.patientId, "order:created", {
+    orderId: data.orderId,
+    pharmacyId: data.pharmacyId,
+    status: data.status,
+    itemCount: data.itemCount,
+    createdAt: data.createdAt,
+  });
+};
+
+// Helper function to emit order cancelled events
+const emitOrderCancelled = (order: IOrder) => {
+  const orderId = getOrderId(order);
+  socketEvents.emitToUser(order.patientId, "order:cancelled", {
+    orderId,
+    status: "CANCELLED",
+    pharmacyId: order.pharmacyId,
+  });
+  socketEvents.emitToAdmin("order:cancelled", {
+    orderId,
+    patientId: order.patientId,
+    pharmacyId: order.pharmacyId,
+  });
+};
 
 // Patient creates an order from prescription
 router.post(
@@ -13,23 +81,18 @@ router.post(
   requireRole(["PATIENT"]),
   async (req, res) => {
     try {
-      const body = req.body;
-      console.log("Creating order with data:", { ...body, patientId: req.user!.sub });
+      const { pharmacyId, ...orderData } = req.body;
       
-      if (!body.pharmacyId) {
+      if (!pharmacyId) {
         return res.status(400).json({ message: "pharmacyId is required" });
       }
       
-      // Order starts as PENDING - admin needs to accept first
       const order = await Order.create({
-        ...body,
+        ...orderData,
         patientId: req.user!.sub,
-        status: "PENDING", // Admin will accept and change to ORDER_RECEIVED
+        status: "PENDING",
       });
       
-      console.log(`Order created successfully: ${order._id} for pharmacy: ${order.pharmacyId}`);
-      
-      // Emit activity - order created, waiting for admin approval
       await createActivity(
         "ORDER_CREATED",
         "New Order Created",
@@ -37,26 +100,11 @@ router.post(
         {
           patientId: order.patientId,
           pharmacyId: order.pharmacyId,
-          metadata: { orderId: order._id.toString(), itemCount: order.items.length },
+          metadata: { orderId: getOrderId(order), itemCount: order.items.length },
         }
       );
 
-      // Emit Socket.IO events
-      socketEvents.emitToAdmin("order:created", {
-        orderId: order._id.toString(),
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-        status: order.status,
-        itemCount: order.items.length,
-        createdAt: order.createdAt,
-      });
-      socketEvents.emitToUser(order.patientId, "order:created", {
-        orderId: order._id.toString(),
-        pharmacyId: order.pharmacyId,
-        status: order.status,
-        itemCount: order.items.length,
-        createdAt: order.createdAt,
-      });
+      emitOrderCreated(order);
       
       res.status(201).json(order);
     } catch (error: any) {
@@ -66,37 +114,68 @@ router.post(
   }
 );
 
+// Get orders (with auth - for mobile app compatibility)
+// Must come before /my route
+router.get(
+  "/",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { patientId, pharmacyId } = req.query;
+      
+      if (patientId && req.user!.sub === patientId) {
+        const orders = await Order.find({ patientId: String(patientId) })
+          .sort({ createdAt: -1 })
+          .limit(50);
+        return res.json(orders);
+      }
+      
+      if (req.user!.role === "PHARMACY_STAFF" || req.user!.role === "SUPER_ADMIN") {
+        const filter: any = {};
+        if (patientId) filter.patientId = String(patientId);
+        if (pharmacyId) filter.pharmacyId = String(pharmacyId);
+        const orders = await Order.find(filter)
+          .sort({ createdAt: -1 })
+          .limit(100);
+        return res.json(orders);
+      }
+      
+      res.json([]);
+    } catch (error: any) {
+      console.error("Error fetching orders:", error);
+      res.status(500).json({ message: "Failed to fetch orders", error: error.message });
+    }
+  }
+);
+
 // Patient views own orders
 router.get(
   "/my",
   requireAuth,
   async (req, res) => {
-    // Allow any authenticated user to view their own orders
-    // The patientId is taken from the JWT token (req.user.sub)
-    // This works for PATIENT role users or any user querying their own data
-    const orders = await Order.find({ patientId: req.user!.sub })
-      .sort({ createdAt: -1 })
-      .limit(50);
-    res.json(orders);
+    try {
+      const orders = await Order.find({ patientId: req.user!.sub })
+        .sort({ createdAt: -1 })
+        .limit(50);
+      res.json(orders);
+    } catch (error: any) {
+      console.error("Error fetching user orders:", error);
+      res.status(500).json({ message: "Failed to fetch orders", error: error.message });
+    }
   }
 );
 
-// Pharmacy views orders to fulfill (also accessible by SUPER_ADMIN)
+// Pharmacy views orders to fulfill
 router.get(
   "/by-pharmacy/:pharmacyId",
   requireAuth,
   requireRole(["PHARMACY_STAFF", "SUPER_ADMIN"]),
   async (req, res) => {
     try {
-      const pharmacyId = req.params.pharmacyId;
-      console.log(`Fetching orders for pharmacy: ${pharmacyId}`);
-      
-      // Query by pharmacyId (handles both string and ObjectId)
-      const orders = await Order.find({ pharmacyId: pharmacyId })
+      const { pharmacyId } = req.params;
+      const orders = await Order.find({ pharmacyId })
         .sort({ createdAt: -1 })
         .limit(100);
-      
-      console.log(`Found ${orders.length} orders for pharmacy ${pharmacyId}`);
       res.json(orders);
     } catch (error: any) {
       console.error("Error fetching orders by pharmacy:", error);
@@ -105,60 +184,69 @@ router.get(
   }
 );
 
+// Admin status update helper
+const adminStatusUpdate = async (
+  req: any,
+  res: any,
+  currentStatus: string,
+  newStatus: string,
+  activityTitle: string,
+  activityDescription: string,
+  updateFields: any
+) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    
+    if (order.status !== currentStatus) {
+      return res.status(400).json({ 
+        message: `Order must be ${currentStatus}. Current status: ${order.status}` 
+      });
+    }
+    
+    const updated = await Order.findByIdAndUpdate(
+      req.params.id,
+      { status: newStatus, ...updateFields },
+      { new: true }
+    );
+    
+    await createActivity(
+      "ORDER_STATUS_UPDATED",
+      activityTitle,
+      activityDescription.replace("{shortId}", getShortOrderId(order)),
+      {
+        patientId: order.patientId,
+        pharmacyId: order.pharmacyId,
+        metadata: { orderId: getOrderId(order), status: newStatus },
+      }
+    );
+
+    emitOrderStatusUpdate(order, newStatus);
+    
+    res.json(updated);
+  } catch (error: any) {
+    console.error(`Error updating order status to ${newStatus}:`, error);
+    res.status(500).json({ message: "Failed to update order", error: error.message });
+  }
+};
+
 // Admin accepts order (changes PENDING to ORDER_RECEIVED)
 router.patch(
   "/:id/admin-accept",
   requireAuth,
   requireRole(["SUPER_ADMIN"]),
   async (req, res) => {
-    try {
-      const order = await Order.findById(req.params.id);
-      if (!order) {
-        return res.status(404).json({ message: "Order not found" });
-      }
-      
-      if (order.status !== "PENDING") {
-        return res.status(400).json({ message: `Order is already ${order.status}. Cannot accept.` });
-      }
-      
-      const updated = await Order.findByIdAndUpdate(
-        req.params.id,
-        { 
-          status: "ORDER_RECEIVED",
-          adminApprovedAt: new Date(),
-        },
-        { new: true }
-      );
-      
-      await createActivity(
-        "ORDER_STATUS_UPDATED",
-        "Order Received by Admin",
-        `Order ${order._id.slice(-8)} received and accepted by admin`,
-        {
-          patientId: order.patientId,
-          pharmacyId: order.pharmacyId,
-          metadata: { orderId: order._id.toString(), status: "ORDER_RECEIVED" },
-        }
-      );
-
-      // Emit Socket.IO events
-      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "ORDER_RECEIVED",
-        pharmacyId: order.pharmacyId,
-      });
-      socketEvents.emitToAdmin("order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "ORDER_RECEIVED",
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-      });
-      
-      res.json(updated);
-    } catch (error: any) {
-      console.error("Error accepting order:", error);
-      res.status(500).json({ message: "Failed to accept order", error: error.message });
-    }
+    await adminStatusUpdate(
+      req,
+      res,
+      "PENDING",
+      "ORDER_RECEIVED",
+      "Order Received by Admin",
+      "Order {shortId} received and accepted by admin",
+      { adminApprovedAt: new Date() }
+    );
   }
 );
 
@@ -168,54 +256,15 @@ router.patch(
   requireAuth,
   requireRole(["SUPER_ADMIN"]),
   async (req, res) => {
-    try {
-      const order = await Order.findById(req.params.id);
-      if (!order) {
-        return res.status(404).json({ message: "Order not found" });
-      }
-      
-      if (order.status !== "ORDER_RECEIVED") {
-        return res.status(400).json({ message: `Order must be ORDER_RECEIVED. Current status: ${order.status}` });
-      }
-      
-      const updated = await Order.findByIdAndUpdate(
-        req.params.id,
-        { 
-          status: "MEDICINE_RECEIVED",
-          medicineReceivedAt: new Date(),
-        },
-        { new: true }
-      );
-      
-      await createActivity(
-        "ORDER_STATUS_UPDATED",
-        "Medicine Received",
-        `Medicine for order ${order._id.slice(-8)} received from supplier`,
-        {
-          patientId: order.patientId,
-          pharmacyId: order.pharmacyId,
-          metadata: { orderId: order._id.toString(), status: "MEDICINE_RECEIVED" },
-        }
-      );
-
-      // Emit Socket.IO events
-      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "MEDICINE_RECEIVED",
-        pharmacyId: order.pharmacyId,
-      });
-      socketEvents.emitToAdmin("order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "MEDICINE_RECEIVED",
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-      });
-      
-      res.json(updated);
-    } catch (error: any) {
-      console.error("Error marking medicine received:", error);
-      res.status(500).json({ message: "Failed to update order", error: error.message });
-    }
+    await adminStatusUpdate(
+      req,
+      res,
+      "ORDER_RECEIVED",
+      "MEDICINE_RECEIVED",
+      "Medicine Received",
+      "Medicine for order {shortId} received from supplier",
+      { medicineReceivedAt: new Date() }
+    );
   }
 );
 
@@ -225,64 +274,19 @@ router.patch(
   requireAuth,
   requireRole(["SUPER_ADMIN"]),
   async (req, res) => {
-    try {
-      const order = await Order.findById(req.params.id);
-      if (!order) {
-        return res.status(404).json({ message: "Order not found" });
-      }
-      
-      if (order.status !== "MEDICINE_RECEIVED") {
-        return res.status(400).json({ message: `Order must be MEDICINE_RECEIVED. Current status: ${order.status}` });
-      }
-      
-      const updated = await Order.findByIdAndUpdate(
-        req.params.id,
-        { 
-          status: "SENT_TO_PHARMACY",
-          sentToPharmacyAt: new Date(),
-        },
-        { new: true }
-      );
-      
-      await createActivity(
-        "ORDER_STATUS_UPDATED",
-        "Order Sent to Pharmacy",
-        `Order ${order._id.slice(-8)} sent to pharmacy for processing`,
-        {
-          patientId: order.patientId,
-          pharmacyId: order.pharmacyId,
-          metadata: { orderId: order._id.toString(), status: "SENT_TO_PHARMACY" },
-        }
-      );
-
-      // Emit Socket.IO events
-      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "SENT_TO_PHARMACY",
-        pharmacyId: order.pharmacyId,
-      });
-      socketEvents.emitToRole("PHARMACY_STAFF", "order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "SENT_TO_PHARMACY",
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-      });
-      socketEvents.emitToAdmin("order:statusUpdated", {
-        orderId: order._id.toString(),
-        status: "SENT_TO_PHARMACY",
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-      });
-      
-      res.json(updated);
-    } catch (error: any) {
-      console.error("Error sending to pharmacy:", error);
-      res.status(500).json({ message: "Failed to send to pharmacy", error: error.message });
-    }
+    await adminStatusUpdate(
+      req,
+      res,
+      "MEDICINE_RECEIVED",
+      "SENT_TO_PHARMACY",
+      "Order Sent to Pharmacy",
+      "Order {shortId} sent to pharmacy for processing",
+      { sentToPharmacyAt: new Date() }
+    );
   }
 );
 
-// Pharmacy updates order status (accepted, packed, out for delivery, delivered)
+// Pharmacy updates order status
 router.patch(
   "/:id/status",
   requireAuth,
@@ -296,14 +300,14 @@ router.patch(
         return res.status(404).json({ message: "Order not found" });
       }
       
-      // Pharmacy can only accept orders that are SENT_TO_PHARMACY
       if (status === "ACCEPTED" && order.status !== "SENT_TO_PHARMACY") {
-        return res.status(400).json({ message: `Order must be SENT_TO_PHARMACY to accept. Current status: ${order.status}` });
+        return res.status(400).json({ 
+          message: `Order must be SENT_TO_PHARMACY to accept. Current status: ${order.status}` 
+        });
       }
       
       const updateData: any = { status };
       
-      // If status is OUT_FOR_DELIVERY, add delivery person info
       if (status === "OUT_FOR_DELIVERY") {
         if (deliveryPersonId) updateData.deliveryPersonId = deliveryPersonId;
         if (deliveryPersonName) updateData.deliveryPersonName = deliveryPersonName;
@@ -312,7 +316,6 @@ router.patch(
         if (deliveryNotes) updateData.deliveryNotes = deliveryNotes;
       }
       
-      // If status is DELIVERED, set deliveredAt timestamp
       if (status === "DELIVERED") {
         updateData.deliveredAt = new Date();
         if (deliveryNotes) updateData.deliveryNotes = deliveryNotes;
@@ -324,8 +327,7 @@ router.patch(
         { new: true }
       );
       
-      // Create activity (will be fetched via polling on frontend)
-      let description = `Order ${order._id.slice(-8)} status changed to ${status}`;
+      let description = `Order ${getShortOrderId(order)} status changed to ${status}`;
       if (status === "OUT_FOR_DELIVERY" && deliveryPersonName) {
         description += ` - Assigned to ${deliveryPersonName}`;
       }
@@ -341,7 +343,7 @@ router.patch(
           patientId: order.patientId,
           pharmacyId: order.pharmacyId,
           metadata: { 
-            orderId: order._id.toString(), 
+            orderId: getOrderId(order), 
             status,
             deliveryPersonName: updated?.deliveryPersonName,
             estimatedDeliveryTime: updated?.estimatedDeliveryTime,
@@ -349,21 +351,10 @@ router.patch(
         }
       );
 
-      // Emit Socket.IO events
-      socketEvents.emitToUser(order.patientId, "order:statusUpdated", {
-        orderId: order._id.toString(),
-        status,
-        pharmacyId: order.pharmacyId,
+      emitOrderStatusUpdate(order, status, {
         deliveryPersonName: updated?.deliveryPersonName,
         estimatedDeliveryTime: updated?.estimatedDeliveryTime,
         deliveredAt: updated?.deliveredAt,
-      });
-      socketEvents.emitToAdmin("order:statusUpdated", {
-        orderId: order._id.toString(),
-        status,
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-        deliveryPersonName: updated?.deliveryPersonName,
       });
       
       res.json(updated);
@@ -371,34 +362,6 @@ router.patch(
       console.error("Error updating order status:", error);
       res.status(500).json({ message: "Failed to update order status", error: error.message });
     }
-  }
-);
-
-// Get orders by patientId (with auth - for mobile app compatibility)
-router.get(
-  "/",
-  requireAuth,
-  async (req, res) => {
-    const { patientId } = req.query;
-    
-    // If patientId is provided and matches logged-in user, allow it
-    // Otherwise, only allow if user is SUPER_ADMIN or PHARMACY_STAFF
-    if (patientId && req.user!.sub === patientId) {
-      const orders = await Order.find({ patientId }).sort({ createdAt: -1 }).limit(50);
-      return res.json(orders);
-    }
-    
-    // For pharmacy staff or admin, allow querying by patientId or pharmacyId
-    if (req.user!.role === "PHARMACY_STAFF" || req.user!.role === "SUPER_ADMIN") {
-      const filter: any = {};
-      if (patientId) filter.patientId = patientId;
-      if (req.query.pharmacyId) filter.pharmacyId = req.query.pharmacyId;
-      const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(100);
-      return res.json(orders);
-    }
-    
-    // Default: return empty array if no access
-    res.json([]);
   }
 );
 
@@ -415,12 +378,10 @@ router.patch(
         return res.status(404).json({ message: "Order not found" });
       }
 
-      // Check if user owns the order or is admin
       if (order.patientId !== req.user!.sub && req.user!.role !== "SUPER_ADMIN") {
         return res.status(403).json({ message: "You can only cancel your own orders" });
       }
 
-      // Only allow cancellation if order is not already delivered or cancelled
       const nonCancellableStatuses = ["DELIVERED", "CANCELLED", "OUT_FOR_DELIVERY"];
       if (nonCancellableStatuses.includes(order.status)) {
         return res.status(400).json({ 
@@ -438,31 +399,23 @@ router.patch(
         { new: true }
       );
 
+      const cancelledBy = req.user!.role === "SUPER_ADMIN" ? "admin" : "patient";
       await createActivity(
-        "ORDER_CANCELLED",
+        "ORDER_STATUS_UPDATED",
         "Order Cancelled",
-        `Order ${order._id.slice(-8)} cancelled by ${req.user!.role === "SUPER_ADMIN" ? "admin" : "patient"}`,
+        `Order ${getShortOrderId(order)} cancelled by ${cancelledBy}`,
         {
           patientId: order.patientId,
           pharmacyId: order.pharmacyId,
           metadata: { 
-            orderId: order._id.toString(), 
+            orderId: getOrderId(order), 
+            status: "CANCELLED",
             cancellationReason: cancellationReason || "Cancelled by patient",
           },
         }
       );
 
-      // Emit Socket.IO events
-      socketEvents.emitToUser(order.patientId, "order:cancelled", {
-        orderId: order._id.toString(),
-        status: "CANCELLED",
-        pharmacyId: order.pharmacyId,
-      });
-      socketEvents.emitToAdmin("order:cancelled", {
-        orderId: order._id.toString(),
-        patientId: order.patientId,
-        pharmacyId: order.pharmacyId,
-      });
+      emitOrderCancelled(order);
 
       res.json(updated);
     } catch (error: any) {
@@ -471,4 +424,3 @@ router.patch(
     }
   }
 );
-

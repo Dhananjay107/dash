@@ -1,5 +1,6 @@
-import { Router } from "express";
-import { ReportRequest } from "./reportRequest.model";
+import { Router, Request, Response } from "express";
+import mongoose from "mongoose";
+import { ReportRequest, IReportRequest } from "./reportRequest.model";
 import { requireAuth } from "../shared/middleware/auth";
 import { AppError } from "../shared/middleware/errorHandler";
 import { socketEvents } from "../socket/socket.server";
@@ -9,6 +10,17 @@ import path from "path";
 import fs from "fs";
 
 const router = Router();
+
+// Helper function to get report request ID as string
+const getReportRequestId = (reportRequest: IReportRequest): string => String(reportRequest._id);
+
+// Helper function to get file system path from URL
+const getFilePath = (fileUrl: string): string => {
+  if (!fileUrl) return "";
+  // Remove leading slash and convert URL path to filesystem path
+  const relativePath = fileUrl.startsWith("/") ? fileUrl.slice(1) : fileUrl;
+  return path.join(process.cwd(), relativePath);
+};
 
 // Configure multer for file uploads
 const upload = multer({
@@ -30,7 +42,7 @@ const upload = multer({
 });
 
 // Create report request (Doctor)
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const { patientId, reportType, description } = req.body;
     const doctorId = req.user?.sub;
@@ -40,7 +52,7 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     if (!patientId || !reportType) {
-      throw new AppError("Patient ID and report type are required", 400);
+      return res.status(400).json({ message: "Patient ID and report type are required" });
     }
 
     const reportRequest = await ReportRequest.create({
@@ -55,38 +67,33 @@ router.post("/", requireAuth, async (req, res) => {
     const doctor = await User.findById(doctorId).select("name").lean();
     const doctorName = doctor?.name || "Doctor";
 
-    // Ensure patientId is a string
-    const patientIdStr = patientId.toString();
+    const patientIdStr = String(patientId);
+    const requestId = getReportRequestId(reportRequest);
 
     // Emit Socket.IO event to patient
-    const eventData = {
-      requestId: reportRequest._id.toString(),
-      doctorId: doctorId.toString(),
+    socketEvents.emitToUser(patientIdStr, "report:requested", {
+      requestId,
+      doctorId: String(doctorId),
       doctorName,
       reportType,
       description,
       requestedAt: reportRequest.requestedAt,
       patientId: patientIdStr,
-    };
-
-    console.log(`📋 Report request created: ${reportRequest._id}`);
-    console.log(`📋 Emitting Socket.IO event to patient: ${patientIdStr}`);
-    console.log(`📋 Event data:`, eventData);
-
-    socketEvents.emitToUser(patientIdStr, "report:requested", eventData);
+    });
 
     res.status(201).json(reportRequest);
   } catch (error: any) {
+    console.error("Error creating report request:", error);
     if (error instanceof AppError) {
-      res.status(error.statusCode).json({ message: error.message });
+      res.status(error.status).json({ message: error.message });
     } else {
       res.status(500).json({ message: error.message || "Failed to create report request" });
     }
   }
 });
 
-// Get report requests (Patient)
-router.get("/", requireAuth, async (req, res) => {
+// Get report requests
+router.get("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const { patientId, doctorId } = req.query;
     const userId = req.user?.sub;
@@ -99,19 +106,16 @@ router.get("/", requireAuth, async (req, res) => {
     let query: any = {};
 
     if (patientId) {
-      // Patient viewing their own requests
       if (userRole === "PATIENT" && patientId !== userId) {
         return res.status(403).json({ message: "Access denied" });
       }
       query.patientId = patientId;
     } else if (doctorId) {
-      // Doctor viewing their requests
       if (userRole === "DOCTOR" && doctorId !== userId) {
         return res.status(403).json({ message: "Access denied" });
       }
       query.doctorId = doctorId;
     } else {
-      // Default: get requests for current user based on role
       if (userRole === "PATIENT") {
         query.patientId = userId;
       } else if (userRole === "DOCTOR") {
@@ -127,6 +131,7 @@ router.get("/", requireAuth, async (req, res) => {
 
     res.json(requests);
   } catch (error: any) {
+    console.error("Error fetching report requests:", error);
     res.status(500).json({ message: error.message || "Failed to fetch report requests" });
   }
 });
@@ -136,7 +141,7 @@ router.patch(
   "/:id/upload",
   requireAuth,
   upload.single("file"),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const userId = req.user?.sub;
@@ -168,10 +173,10 @@ router.patch(
       let fileName = "";
 
       if (req.file) {
-        // In production, upload to cloud storage (S3, Cloudinary, etc.)
-        // For now, save file path
         fileUrl = `/uploads/reports/${req.file.filename}`;
         fileName = req.file.originalname;
+      } else {
+        return res.status(400).json({ message: "File is required" });
       }
 
       reportRequest.status = "UPLOADED";
@@ -183,7 +188,7 @@ router.patch(
 
       // Emit Socket.IO event to doctor
       socketEvents.emitToUser(reportRequest.doctorId, "report:uploaded", {
-        requestId: reportRequest._id.toString(),
+        requestId: getReportRequestId(reportRequest),
         patientId: reportRequest.patientId,
         reportType: reportRequest.reportType,
         fileUrl: reportRequest.fileUrl,
@@ -193,13 +198,14 @@ router.patch(
 
       res.json(reportRequest);
     } catch (error: any) {
+      console.error("Error uploading report:", error);
       res.status(500).json({ message: error.message || "Failed to upload report" });
     }
   }
 );
 
 // Mark report as reviewed (Doctor)
-router.patch("/:id/review", requireAuth, async (req, res) => {
+router.patch("/:id/review", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.sub;
@@ -232,19 +238,20 @@ router.patch("/:id/review", requireAuth, async (req, res) => {
 
     // Emit Socket.IO event to patient
     socketEvents.emitToUser(reportRequest.patientId, "report:reviewed", {
-      requestId: reportRequest._id.toString(),
+      requestId: getReportRequestId(reportRequest),
       doctorId: reportRequest.doctorId,
       reviewedAt: new Date(),
     });
 
     res.json(reportRequest);
   } catch (error: any) {
+    console.error("Error reviewing report:", error);
     res.status(500).json({ message: error.message || "Failed to review report" });
   }
 });
 
 // Delete report request
-router.delete("/:id", requireAuth, async (req, res) => {
+router.delete("/:id", requireAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.sub;
@@ -269,33 +276,89 @@ router.delete("/:id", requireAuth, async (req, res) => {
     }
 
     // Delete file if exists
-    if (reportRequest.fileUrl && fs.existsSync(reportRequest.fileUrl)) {
-      fs.unlinkSync(reportRequest.fileUrl);
-    }
-
-    // Delete the report request and verify deletion
-    const deleteResult = await ReportRequest.deleteOne({ _id: id });
-    
-    if (deleteResult.deletedCount === 0) {
-      return res.status(500).json({ message: "Failed to delete report request" });
-    }
-
-    // Verify deletion
-    const verifyDelete = await ReportRequest.findById(id);
-    if (verifyDelete) {
-      // Try force delete using collection
-      await ReportRequest.collection.deleteOne({ _id: reportRequest._id });
-      const verifyAgain = await ReportRequest.findById(id);
-      if (verifyAgain) {
-        return res.status(500).json({ message: "Failed to delete report request from database" });
+    if (reportRequest.fileUrl) {
+      try {
+        const filePath = getFilePath(reportRequest.fileUrl);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (fileError: any) {
+        console.error("Error deleting file:", fileError);
+        // Continue with deletion even if file deletion fails
       }
     }
 
-    res.json({ message: "Report request deleted" });
+    const reportRequestObjectId = reportRequest._id as mongoose.Types.ObjectId;
+    const reportRequestIdStr = getReportRequestId(reportRequest);
+
+    // Try multiple deletion methods
+    let deleted = false;
+    let deleteResult: any = null;
+
+    // Method 1: Standard deleteOne
+    deleteResult = await ReportRequest.deleteOne({ _id: reportRequestObjectId });
+    if (deleteResult.deletedCount > 0) {
+      deleted = true;
+    }
+
+    // Method 2: Force delete using native collection if needed
+    if (!deleted) {
+      try {
+        const db = mongoose.connection.db;
+        if (db) {
+          const collection = db.collection(ReportRequest.collection.name);
+          const result = await collection.deleteOne(
+            { _id: reportRequestObjectId },
+            { w: 'majority', j: true } as any
+          );
+          if (result.deletedCount > 0) {
+            deleted = true;
+            deleteResult = result;
+          }
+        }
+      } catch (collectionError: any) {
+        console.error("Collection delete error:", collectionError);
+      }
+    }
+
+    // Method 3: findByIdAndDelete as fallback
+    if (!deleted) {
+      const deletedDoc = await ReportRequest.findByIdAndDelete(reportRequestObjectId);
+      if (deletedDoc) {
+        deleted = true;
+        deleteResult = { deletedCount: 1, acknowledged: true };
+      }
+    }
+
+    // Verify deletion
+    if (deleted) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const verifyDelete = await ReportRequest.findById(reportRequestObjectId);
+      if (verifyDelete) {
+        console.error(`[DELETE] Critical: Report request ${reportRequestIdStr} still exists after deletion`);
+        return res.status(500).json({ 
+          message: "Failed to delete report request from database",
+          error: "Document still exists after deletion attempt"
+        });
+      }
+    } else {
+      const checkExists = await ReportRequest.findById(reportRequestObjectId);
+      if (!checkExists) {
+        deleted = true;
+      } else {
+        return res.status(500).json({
+          message: "Failed to delete report request from database",
+          error: "All deletion methods returned deletedCount: 0",
+          reportRequestId: reportRequestIdStr
+        });
+      }
+    }
+
+    res.json({ message: "Report request deleted successfully" });
   } catch (error: any) {
+    console.error("Error deleting report request:", error);
     res.status(500).json({ message: error.message || "Failed to delete report request" });
   }
 });
 
 export { router };
-

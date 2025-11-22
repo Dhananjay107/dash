@@ -25,6 +25,9 @@ export interface IOrder extends Document {
   deliveryNotes?: string; // Notes about delivery
   cancellationReason?: string; // Reason for cancellation
   cancelledAt?: Date; // When order was cancelled
+  adminApprovedAt?: Date; // When admin approved the order
+  medicineReceivedAt?: Date; // When medicine was received from supplier
+  sentToPharmacyAt?: Date; // When order was sent to pharmacy
 }
 
 const OrderItemSchema = new Schema<IOrderItem>(

@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { Hospital } from "./hospital.model";
-import { Pharmacy } from "./pharmacy.model";
-import { Distributor } from "./distributor.model";
+import { Hospital, IHospital } from "./hospital.model";
+import { Pharmacy, IPharmacy } from "./pharmacy.model";
+import { Distributor, IDistributor } from "./distributor.model";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
 import { createActivity } from "../activity/activity.service";
 
@@ -13,19 +13,23 @@ router.post(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
-    const hospital = await Hospital.create(req.body);
-    
-    await createActivity(
-      "HOSPITAL_CREATED",
-      "Hospital Created",
-      `New hospital created: ${hospital.name}`,
-      {
-        hospitalId: hospital._id.toString(),
-        metadata: { name: hospital.name, address: hospital.address },
-      }
-    );
-    
-    res.status(201).json(hospital);
+    try {
+      const hospital = await Hospital.create(req.body) as IHospital;
+      
+      await createActivity(
+        "HOSPITAL_CREATED",
+        "Hospital Created",
+        `New hospital created: ${hospital.name}`,
+        {
+          hospitalId: String(hospital._id),
+          metadata: { name: hospital.name, address: hospital.address },
+        }
+      );
+      
+      res.status(201).json(hospital);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -34,8 +38,12 @@ router.get(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
-    const hospitals = await Hospital.find().sort({ createdAt: -1 });
-    res.json(hospitals);
+    try {
+      const hospitals = await Hospital.find().sort({ createdAt: -1 });
+      res.json(hospitals);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -61,19 +69,23 @@ router.post(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
-    const pharmacy = await Pharmacy.create(req.body);
-    
-    await createActivity(
-      "PHARMACY_CREATED",
-      "Pharmacy Created",
-      `New pharmacy created: ${pharmacy.name}`,
-      {
-        pharmacyId: pharmacy._id.toString(),
-        metadata: { name: pharmacy.name, address: pharmacy.address },
-      }
-    );
-    
-    res.status(201).json(pharmacy);
+    try {
+      const pharmacy = await Pharmacy.create(req.body) as IPharmacy;
+      
+      await createActivity(
+        "PHARMACY_CREATED",
+        "Pharmacy Created",
+        `New pharmacy created: ${pharmacy.name}`,
+        {
+          pharmacyId: String(pharmacy._id),
+          metadata: { name: pharmacy.name, address: pharmacy.address },
+        }
+      );
+      
+      res.status(201).json(pharmacy);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -82,8 +94,12 @@ router.get(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
-    const pharmacies = await Pharmacy.find().sort({ createdAt: -1 });
-    res.json(pharmacies);
+    try {
+      const pharmacies = await Pharmacy.find().sort({ createdAt: -1 });
+      res.json(pharmacies);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -109,19 +125,23 @@ router.post(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
-    const distributor = await Distributor.create(req.body);
-    
-    await createActivity(
-      "DISTRIBUTOR_CREATED",
-      "Distributor Created",
-      `New distributor created: ${distributor.name}`,
-      {
-        distributorId: distributor._id.toString(),
-        metadata: { name: distributor.name, address: distributor.address },
-      }
-    );
-    
-    res.status(201).json(distributor);
+    try {
+      const distributor = await Distributor.create(req.body) as IDistributor;
+      
+      await createActivity(
+        "DISTRIBUTOR_CREATED",
+        "Distributor Created",
+        `New distributor created: ${distributor.name}`,
+        {
+          distributorId: String(distributor._id),
+          metadata: { name: distributor.name, address: distributor.address },
+        }
+      );
+      
+      res.status(201).json(distributor);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -130,8 +150,12 @@ router.get(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
-    const distributors = await Distributor.find().sort({ createdAt: -1 });
-    res.json(distributors);
+    try {
+      const distributors = await Distributor.find().sort({ createdAt: -1 });
+      res.json(distributors);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
   }
 );
 
@@ -162,7 +186,7 @@ router.patch(
         req.params.id,
         req.body,
         { new: true, runValidators: true }
-      );
+      ) as IHospital | null;
       if (!hospital) {
         return res.status(404).json({ message: "Hospital not found" });
       }
@@ -172,7 +196,7 @@ router.patch(
         "Hospital Updated",
         `Hospital updated: ${hospital.name}`,
         {
-          hospitalId: hospital._id.toString(),
+          hospitalId: String(hospital._id),
           metadata: { name: hospital.name },
         }
       );
@@ -192,7 +216,7 @@ router.delete(
   async (req, res) => {
     try {
       const hospitalId = req.params.id;
-      const hospital = await Hospital.findById(hospitalId);
+      const hospital = await Hospital.findById(hospitalId) as IHospital | null;
       if (!hospital) {
         return res.status(404).json({ message: "Hospital not found" });
       }
@@ -200,21 +224,24 @@ router.delete(
       // Store hospital info before deletion
       const hospitalInfo = {
         name: hospital.name,
-        hospitalId: hospital._id.toString(),
+        hospitalId: String(hospital._id),
       };
 
       // Delete the hospital and verify deletion
-      const deleteResult = await Hospital.deleteOne({ _id: hospitalId });
+      const deleteResult = await Hospital.deleteOne({ _id: hospital._id as any });
       
       if (deleteResult.deletedCount === 0) {
         return res.status(500).json({ message: "Failed to delete hospital" });
       }
 
+
+      
+
       // Verify deletion
       const verifyDelete = await Hospital.findById(hospitalId);
       if (verifyDelete) {
         // Try force delete using collection
-        await Hospital.collection.deleteOne({ _id: hospital._id });
+        await Hospital.collection.deleteOne({ _id: hospital._id as any });
         const verifyAgain = await Hospital.findById(hospitalId);
         if (verifyAgain) {
           return res.status(500).json({ message: "Failed to delete hospital from database" });
@@ -249,7 +276,7 @@ router.patch(
         req.params.id,
         req.body,
         { new: true, runValidators: true }
-      );
+      ) as IPharmacy | null;
       if (!pharmacy) {
         return res.status(404).json({ message: "Pharmacy not found" });
       }
@@ -259,7 +286,7 @@ router.patch(
         "Pharmacy Updated",
         `Pharmacy updated: ${pharmacy.name}`,
         {
-          pharmacyId: pharmacy._id.toString(),
+          pharmacyId: String(pharmacy._id),
           metadata: { name: pharmacy.name },
         }
       );
@@ -279,7 +306,7 @@ router.delete(
   async (req, res) => {
     try {
       const pharmacyId = req.params.id;
-      const pharmacy = await Pharmacy.findById(pharmacyId);
+      const pharmacy = await Pharmacy.findById(pharmacyId) as IPharmacy | null;
       if (!pharmacy) {
         return res.status(404).json({ message: "Pharmacy not found" });
       }
@@ -287,11 +314,11 @@ router.delete(
       // Store pharmacy info before deletion
       const pharmacyInfo = {
         name: pharmacy.name,
-        pharmacyId: pharmacy._id.toString(),
+        pharmacyId: String(pharmacy._id),
       };
 
       // Delete the pharmacy and verify deletion
-      const deleteResult = await Pharmacy.deleteOne({ _id: pharmacyId });
+      const deleteResult = await Pharmacy.deleteOne({ _id: pharmacy._id as any });
       
       if (deleteResult.deletedCount === 0) {
         return res.status(500).json({ message: "Failed to delete pharmacy" });
@@ -301,7 +328,7 @@ router.delete(
       const verifyDelete = await Pharmacy.findById(pharmacyId);
       if (verifyDelete) {
         // Try force delete using collection
-        await Pharmacy.collection.deleteOne({ _id: pharmacy._id });
+        await Pharmacy.collection.deleteOne({ _id: pharmacy._id as any });
         const verifyAgain = await Pharmacy.findById(pharmacyId);
         if (verifyAgain) {
           return res.status(500).json({ message: "Failed to delete pharmacy from database" });
@@ -336,7 +363,7 @@ router.patch(
         req.params.id,
         req.body,
         { new: true, runValidators: true }
-      );
+      ) as IDistributor | null;
       if (!distributor) {
         return res.status(404).json({ message: "Distributor not found" });
       }
@@ -346,7 +373,7 @@ router.patch(
         "Distributor Updated",
         `Distributor updated: ${distributor.name}`,
         {
-          distributorId: distributor._id.toString(),
+          distributorId: String(distributor._id),
           metadata: { name: distributor.name },
         }
       );
@@ -366,7 +393,7 @@ router.delete(
   async (req, res) => {
     try {
       const distributorId = req.params.id;
-      const distributor = await Distributor.findById(distributorId);
+      const distributor = await Distributor.findById(distributorId) as IDistributor | null;
       if (!distributor) {
         return res.status(404).json({ message: "Distributor not found" });
       }
@@ -374,11 +401,11 @@ router.delete(
       // Store distributor info before deletion
       const distributorInfo = {
         name: distributor.name,
-        distributorId: distributor._id.toString(),
+        distributorId: String(distributor._id),
       };
 
       // Delete the distributor and verify deletion
-      const deleteResult = await Distributor.deleteOne({ _id: distributorId });
+      const deleteResult = await Distributor.deleteOne({ _id: distributor._id as any });
       
       if (deleteResult.deletedCount === 0) {
         return res.status(500).json({ message: "Failed to delete distributor" });
@@ -388,7 +415,7 @@ router.delete(
       const verifyDelete = await Distributor.findById(distributorId);
       if (verifyDelete) {
         // Try force delete using collection
-        await Distributor.collection.deleteOne({ _id: distributor._id });
+        await Distributor.collection.deleteOne({ _id: distributor._id as any });
         const verifyAgain = await Distributor.findById(distributorId);
         if (verifyAgain) {
           return res.status(500).json({ message: "Failed to delete distributor from database" });
@@ -411,4 +438,3 @@ router.delete(
     }
   }
 );
-

@@ -1,5 +1,5 @@
-import { Router } from "express";
-import { InventoryItem } from "./inventory.model";
+import { Router, Request, Response } from "express";
+import { InventoryItem, IInventoryItem } from "./inventory.model";
 import { DistributorOrder } from "../distributor/distributorOrder.model";
 import { createActivity } from "../activity/activity.service";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
@@ -7,56 +7,67 @@ import { requireAuth, requireRole } from "../shared/middleware/auth";
 export const router = Router();
 
 // Create or update inventory item
-router.post("/", async (req, res) => {
-  const { pharmacyId, medicineName, batchNumber, expiryDate, quantity, threshold, distributorId } =
-    req.body;
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const { pharmacyId, medicineName, batchNumber, expiryDate, quantity, threshold, distributorId } =
+      req.body;
 
-  const item = await InventoryItem.create({
-    pharmacyId,
-    medicineName,
-    batchNumber,
-    expiryDate,
-    quantity,
-    threshold,
-    distributorId,
-  });
+    const item = await InventoryItem.create({
+      pharmacyId,
+      medicineName,
+      batchNumber,
+      expiryDate,
+      quantity,
+      threshold,
+      distributorId,
+    }) as IInventoryItem;
 
-  res.status(201).json(item);
+    res.status(201).json(item);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
+  }
 });
 
 // List all inventory items (with optional filters)
-router.get("/", async (req, res) => {
-  const { pharmacyId, medicineName, lowStock } = req.query;
-  const filter: any = {};
-  if (pharmacyId) filter.pharmacyId = pharmacyId;
-  if (medicineName) filter.medicineName = { $regex: medicineName, $options: "i" };
-  if (lowStock === "true") {
-    // Find items where quantity <= threshold
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const { pharmacyId, medicineName, lowStock } = req.query;
+    const filter: any = {};
+    if (pharmacyId) filter.pharmacyId = pharmacyId;
+    if (medicineName) filter.medicineName = { $regex: medicineName, $options: "i" };
+    if (lowStock === "true") {
+      const items = await InventoryItem.find(filter)
+        .sort({ medicineName: 1 })
+        .limit(500);
+      const lowStockItems = items.filter(item => item.quantity <= item.threshold);
+      return res.json(lowStockItems);
+    }
+
     const items = await InventoryItem.find(filter)
       .sort({ medicineName: 1 })
       .limit(500);
-    const lowStockItems = items.filter(item => item.quantity <= item.threshold);
-    return res.json(lowStockItems);
+    res.json(items);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
   }
-
-  const items = await InventoryItem.find(filter)
-    .sort({ medicineName: 1 })
-    .limit(500);
-  res.json(items);
 });
 
-// List inventory for a pharmacy (must come before /:id route)
-router.get("/by-pharmacy/:pharmacyId", async (req, res) => {
-  const items = await InventoryItem.find({ pharmacyId: req.params.pharmacyId })
-    .sort({ medicineName: 1 })
-    .limit(500);
-  res.json(items);
-});
-
-// Get inventory item by ID (must come after specific routes)
-router.get("/:id", async (req, res) => {
+// List inventory for a pharmacy
+router.get("/by-pharmacy/:pharmacyId", async (req: Request, res: Response) => {
   try {
-    const item = await InventoryItem.findById(req.params.id);
+    const items = await InventoryItem.find({ pharmacyId: req.params.pharmacyId })
+      .sort({ medicineName: 1 })
+      .limit(500);
+    res.json(items);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Get inventory item by ID
+router.get("/:id", async (req: Request, res: Response) => {
+  try {
+    const item = await InventoryItem.findById(req.params.id) as IInventoryItem | null;
     if (!item) {
       return res.status(404).json({ message: "Inventory item not found" });
     }
@@ -67,7 +78,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // Decrease stock when pharmacy dispenses medicines (with transaction)
-router.post("/:id/consume", async (req, res) => {
+router.post("/:id/consume", async (req: Request, res: Response) => {
   const { quantity } = req.body;
   
   try {
@@ -75,7 +86,7 @@ router.post("/:id/consume", async (req, res) => {
     
     // Use transaction to ensure atomicity
     const updatedItem = await TransactionService.executeTransaction(async (session) => {
-      const item = await InventoryItem.findById(req.params.id).session(session);
+      const item = await InventoryItem.findById(req.params.id).session(session) as IInventoryItem | null;
       if (!item) {
         throw new Error("Inventory item not found");
       }
@@ -106,7 +117,7 @@ router.post("/:id/consume", async (req, res) => {
               medicineName: item.medicineName,
               currentQuantity: newQuantity,
               threshold: item.threshold,
-              orderId: order._id.toString(),
+              orderId: String(order._id),
             },
           }
         );
@@ -133,13 +144,13 @@ router.post("/:id/consume", async (req, res) => {
             
             if (distributor) {
               await createNotification({
-                userId: distributor._id.toString(),
+                userId: String(distributor._id),
                 type: "INVENTORY_LOW_STOCK",
                 title: "Low Stock Alert - New Order",
-                message: `${item.medicineName} is below threshold at ${pharmacy?.name || "Pharmacy"}. Auto-restock order #${order._id.toString().slice(-8)} created.`,
+                message: `${item.medicineName} is below threshold at ${pharmacy?.name || "Pharmacy"}. Auto-restock order #${String(order._id).slice(-8)} created.`,
                 channel: "PUSH",
                 metadata: {
-                  orderId: order._id.toString(),
+                  orderId: String(order._id),
                   pharmacyId: item.pharmacyId,
                   medicineName: item.medicineName,
                   quantity: order.quantity,
@@ -151,13 +162,13 @@ router.post("/:id/consume", async (req, res) => {
             const superAdmins = await User.find({ role: "SUPER_ADMIN" });
             for (const admin of superAdmins) {
               await createNotification({
-                userId: admin._id.toString(),
+                userId: String(admin._id),
                 type: "INVENTORY_LOW_STOCK",
                 title: "Low Stock Alert",
                 message: `${item.medicineName} is below threshold at ${pharmacy?.name || "Pharmacy"}. Auto-restock order created.`,
                 channel: "PUSH",
                 metadata: {
-                  orderId: order._id.toString(),
+                  orderId: String(order._id),
                   pharmacyId: item.pharmacyId,
                   distributorId: item.distributorId,
                   medicineName: item.medicineName,
@@ -184,7 +195,7 @@ router.patch(
   "/:id",
   requireAuth,
   requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       const { medicineName, batchNumber, expiryDate, quantity, threshold, distributorId } = req.body;
       const update: any = {};
@@ -200,7 +211,7 @@ router.patch(
         req.params.id,
         { $set: update },
         { new: true, runValidators: true }
-      );
+      ) as IInventoryItem | null;
       
       if (!item) {
         return res.status(404).json({ message: "Inventory item not found" });
@@ -215,7 +226,7 @@ router.patch(
           metadata: { 
             medicineName: item.medicineName,
             quantity: item.quantity,
-            itemId: item._id.toString(),
+            itemId: String(item._id),
           },
         }
       );
@@ -232,10 +243,10 @@ router.delete(
   "/:id",
   requireAuth,
   requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       const itemId = req.params.id;
-      const item = await InventoryItem.findById(itemId);
+      const item = await InventoryItem.findById(itemId) as IInventoryItem | null;
       if (!item) {
         return res.status(404).json({ message: "Inventory item not found" });
       }
@@ -244,25 +255,14 @@ router.delete(
       const itemInfo = {
         medicineName: item.medicineName,
         pharmacyId: item.pharmacyId,
-        itemId: item._id.toString(),
+        itemId: String(item._id),
       };
 
-      // Delete the item and verify deletion
-      const deleteResult = await InventoryItem.deleteOne({ _id: itemId });
+      // Delete the item
+      const deleteResult = await InventoryItem.deleteOne({ _id: item._id });
       
       if (deleteResult.deletedCount === 0) {
         return res.status(500).json({ message: "Failed to delete inventory item" });
-      }
-
-      // Verify deletion
-      const verifyDelete = await InventoryItem.findById(itemId);
-      if (verifyDelete) {
-        // Try force delete using collection
-        await InventoryItem.collection.deleteOne({ _id: item._id });
-        const verifyAgain = await InventoryItem.findById(itemId);
-        if (verifyAgain) {
-          return res.status(500).json({ message: "Failed to delete inventory item from database" });
-        }
       }
 
       await createActivity(
@@ -284,4 +284,3 @@ router.delete(
     }
   }
 );
-

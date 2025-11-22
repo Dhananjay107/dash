@@ -2,7 +2,6 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
-import mongoose from "mongoose";
 import { createServer } from "http";
 import "express-async-errors";
 
@@ -35,36 +34,32 @@ app.use(morgan("dev"));
 app.use(audit);
 
 registerRoutes(app);
-
 app.use(errorHandler);
 
 async function start() {
   try {
-    // Initialize MongoDB with advanced configuration
+    // Initialize MongoDB connection
     const { initializeMongoDB } = await import("./config/mongodb.config");
     await initializeMongoDB(MONGO_URI);
-    console.log("Connected to MongoDB with advanced configuration");
+    console.log("✅ Connected to MongoDB");
 
-    // Create all indexes including text search indexes
+    // Create database indexes
     const { IndexService } = await import("./shared/services/index.service");
     await IndexService.createAllIndexes();
 
     // Initialize Socket.IO
     initializeSocket(httpServer);
-    console.log("Socket.IO server initialized");
+    console.log("✅ Socket.IO server initialized");
 
     httpServer.listen(PORT, () => {
-      console.log(`API Gateway listening on port ${PORT}`);
-      console.log(`Socket.IO server running on port ${PORT}`);
-      console.log(`Public API available at http://localhost:${PORT}/api/public`);
-      console.log(`API Documentation: http://localhost:${PORT}/api/docs`);
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📡 API: http://localhost:${PORT}/api`);
+      console.log(`🌐 Public API: http://localhost:${PORT}/api/public`);
     });
   } catch (err) {
-    console.error("Failed to start server", err);
+    console.error("❌ Failed to start server:", err);
     process.exit(1);
   }
 }
 
 void start();
-
-

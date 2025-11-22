@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { User } from "./user.model";
 import { JWT_SECRET } from "../config";
 import { requireAuth, requireRole } from "../shared/middleware/auth";
@@ -32,12 +33,12 @@ router.post("/signup", async (req, res) => {
     "New User Created",
     `New ${role} user created: ${name} (${email})`,
     {
-      userId: user.id,
+      userId: String(user._id),
       metadata: { role, email },
     }
   );
 
-  res.status(201).json({ id: user.id, name: user.name, email: user.email, role: user.role });
+  res.status(201).json({ id: String(user._id), name: user.name, email: user.email, role: user.role });
 });
 
 router.post("/login", async (req, res) => {
@@ -55,7 +56,7 @@ router.post("/login", async (req, res) => {
 
   const token = jwt.sign(
     {
-      sub: user.id,
+      sub: String(user._id),
       role: user.role,
     },
     JWT_SECRET,
@@ -65,7 +66,7 @@ router.post("/login", async (req, res) => {
   res.json({
     token,
     user: {
-      id: user.id,
+      id: String(user._id),
       name: user.name,
       email: user.email,
       role: user.role,
@@ -194,7 +195,7 @@ router.patch(
         "User Updated",
         `User ${user.name} (${user.email}) was updated`,
         {
-          userId: user.id,
+          userId: String(user._id),
           metadata: { role: user.role },
         }
       );
@@ -229,23 +230,42 @@ router.delete(
         name: user.name,
         email: user.email,
         role: user.role,
-        userId: user._id.toString(),
+        userId: String(user._id),
       };
 
       // Delete the user and verify deletion
       const deleteResult = await User.deleteOne({ _id: userId });
       
       if (deleteResult.deletedCount === 0) {
-        return res.status(500).json({ message: "Failed to delete user" });
+        // Try with ObjectId if string didn't work
+        try {
+          const objectId = new mongoose.Types.ObjectId(userId);
+          const retryResult = await User.deleteOne({ _id: objectId });
+          if (retryResult.deletedCount === 0) {
+            return res.status(500).json({ message: "Failed to delete user" });
+          }
+        } catch (e) {
+          return res.status(500).json({ message: "Failed to delete user" });
+        }
       }
 
       // Verify deletion
+      await new Promise(resolve => setTimeout(resolve, 100)); // Wait for DB sync
       const verifyDelete = await User.findById(userId);
       if (verifyDelete) {
         // Try force delete using collection
-        await User.collection.deleteOne({ _id: user._id });
-        const verifyAgain = await User.findById(userId);
-        if (verifyAgain) {
+        try {
+          const objectId = new mongoose.Types.ObjectId(userId);
+          await User.collection.deleteOne({ _id: objectId });
+          
+          // Wait and verify again
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const verifyAgain = await User.findById(userId);
+          if (verifyAgain) {
+            return res.status(500).json({ message: "Failed to delete user from database" });
+          }
+        } catch (error: any) {
+          console.error("[DELETE] Force delete failed:", error.message);
           return res.status(500).json({ message: "Failed to delete user from database" });
         }
       }

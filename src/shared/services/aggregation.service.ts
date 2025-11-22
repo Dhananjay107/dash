@@ -1,76 +1,56 @@
-/**
- * Advanced Aggregation Pipeline Service
- * Provides reusable aggregation pipelines with lookup and filtering
- */
-
 export class AggregationService {
-  /**
-   * Get appointments with patient and doctor details using $lookup
-   */
+  private static createLookup(from: string, localField: string, as: string) {
+    return {
+      $lookup: {
+        from,
+        localField,
+        foreignField: "_id",
+        as,
+      },
+    };
+  }
+
+  private static createUnwind(path: string) {
+    return {
+      $unwind: {
+        path,
+        preserveNullAndEmptyArrays: true,
+      },
+    };
+  }
+
+  private static createDateRangeFilter(field: string, fromDate?: string, toDate?: string) {
+    const filter: any = {};
+    if (fromDate) filter[field] = { $gte: new Date(fromDate) };
+    if (toDate) {
+      if (filter[field]) {
+        filter[field].$lte = new Date(toDate);
+      } else {
+        filter[field] = { $lte: new Date(toDate) };
+      }
+    }
+    return Object.keys(filter).length > 0 ? filter : null;
+  }
+
   static getAppointmentsWithDetails(filters: any = {}) {
-    const pipeline: any[] = [
-      // Match stage - filter appointments
+    const dateFilter = this.createDateRangeFilter("scheduledAt", filters.fromDate, filters.toDate);
+    
+    return [
       {
         $match: {
           ...(filters.patientId && { patientId: filters.patientId }),
           ...(filters.doctorId && { doctorId: filters.doctorId }),
           ...(filters.hospitalId && { hospitalId: filters.hospitalId }),
           ...(filters.status && { status: filters.status }),
-          ...(filters.fromDate && {
-            scheduledAt: { $gte: new Date(filters.fromDate) },
-          }),
-          ...(filters.toDate && {
-            scheduledAt: { $lte: new Date(filters.toDate) },
-          }),
+          ...dateFilter,
         },
       },
-      // Lookup patient details
-      {
-        $lookup: {
-          from: "users",
-          localField: "patientId",
-          foreignField: "_id",
-          as: "patient",
-        },
-      },
-      // Lookup doctor details
-      {
-        $lookup: {
-          from: "users",
-          localField: "doctorId",
-          foreignField: "_id",
-          as: "doctor",
-        },
-      },
-      // Lookup hospital details
-      {
-        $lookup: {
-          from: "hospitals",
-          localField: "hospitalId",
-          foreignField: "_id",
-          as: "hospital",
-        },
-      },
-      // Unwind arrays (convert to objects)
-      {
-        $unwind: {
-          path: "$patient",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$doctor",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$hospital",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Project only needed fields
+      this.createLookup("users", "patientId", "patient"),
+      this.createLookup("users", "doctorId", "doctor"),
+      this.createLookup("hospitals", "hospitalId", "hospital"),
+      this.createUnwind("$patient"),
+      this.createUnwind("$doctor"),
+      this.createUnwind("$hospital"),
       {
         $project: {
           _id: 1,
@@ -92,80 +72,28 @@ export class AggregationService {
           "hospital.address": 1,
         },
       },
-      // Sort by scheduled date
-      {
-        $sort: { scheduledAt: -1 },
-      },
+      { $sort: { scheduledAt: -1 } },
     ];
-
-    return pipeline;
   }
 
-  /**
-   * Get orders with prescription, patient, and pharmacy details
-   */
   static getOrdersWithDetails(filters: any = {}) {
-    const pipeline: any[] = [
+    const dateFilter = this.createDateRangeFilter("createdAt", filters.fromDate, filters.toDate);
+    
+    return [
       {
         $match: {
           ...(filters.patientId && { patientId: filters.patientId }),
           ...(filters.pharmacyId && { pharmacyId: filters.pharmacyId }),
           ...(filters.status && { status: filters.status }),
-          ...(filters.fromDate && {
-            createdAt: { $gte: new Date(filters.fromDate) },
-          }),
-          ...(filters.toDate && {
-            createdAt: { $lte: new Date(filters.toDate) },
-          }),
+          ...dateFilter,
         },
       },
-      // Lookup patient
-      {
-        $lookup: {
-          from: "users",
-          localField: "patientId",
-          foreignField: "_id",
-          as: "patient",
-        },
-      },
-      // Lookup pharmacy
-      {
-        $lookup: {
-          from: "pharmacies",
-          localField: "pharmacyId",
-          foreignField: "_id",
-          as: "pharmacy",
-        },
-      },
-      // Lookup prescription
-      {
-        $lookup: {
-          from: "prescriptions",
-          localField: "prescriptionId",
-          foreignField: "_id",
-          as: "prescription",
-        },
-      },
-      // Unwind
-      {
-        $unwind: {
-          path: "$patient",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$pharmacy",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$prescription",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Project
+      this.createLookup("users", "patientId", "patient"),
+      this.createLookup("pharmacies", "pharmacyId", "pharmacy"),
+      this.createLookup("prescriptions", "prescriptionId", "prescription"),
+      this.createUnwind("$patient"),
+      this.createUnwind("$pharmacy"),
+      this.createUnwind("$prescription"),
       {
         $project: {
           _id: 1,
@@ -186,33 +114,22 @@ export class AggregationService {
           "prescription.notes": 1,
         },
       },
-      {
-        $sort: { createdAt: -1 },
-      },
+      { $sort: { createdAt: -1 } },
     ];
-
-    return pipeline;
   }
 
-  /**
-   * Get finance data aggregated by type, hospital, and time period
-   */
   static getFinanceAggregated(filters: any = {}) {
-    const pipeline: any[] = [
+    const dateFilter = this.createDateRangeFilter("occurredAt", filters.fromDate, filters.toDate);
+    
+    return [
       {
         $match: {
           ...(filters.hospitalId && { hospitalId: filters.hospitalId }),
           ...(filters.pharmacyId && { pharmacyId: filters.pharmacyId }),
           ...(filters.type && { type: filters.type }),
-          ...(filters.fromDate && {
-            occurredAt: { $gte: new Date(filters.fromDate) },
-          }),
-          ...(filters.toDate && {
-            occurredAt: { $lte: new Date(filters.toDate) },
-          }),
+          ...dateFilter,
         },
       },
-      // Group by type and calculate totals
       {
         $group: {
           _id: {
@@ -225,22 +142,8 @@ export class AggregationService {
           entries: { $push: "$$ROOT" },
         },
       },
-      // Lookup hospital details
-      {
-        $lookup: {
-          from: "hospitals",
-          localField: "_id.hospitalId",
-          foreignField: "_id",
-          as: "hospital",
-        },
-      },
-      {
-        $unwind: {
-          path: "$hospital",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Project
+      this.createLookup("hospitals", "_id.hospitalId", "hospital"),
+      this.createUnwind("$hospital"),
       {
         $project: {
           _id: 0,
@@ -253,17 +156,10 @@ export class AggregationService {
           entries: 1,
         },
       },
-      {
-        $sort: { month: -1, totalAmount: -1 },
-      },
+      { $sort: { month: -1, totalAmount: -1 } },
     ];
-
-    return pipeline;
   }
 
-  /**
-   * Get inventory with low stock alerts and distributor details
-   */
   static getInventoryWithAlerts(filters: any = {}) {
     const pipeline: any[] = [
       {
@@ -274,12 +170,9 @@ export class AggregationService {
           }),
         },
       },
-      // Add computed field for low stock
       {
         $addFields: {
-          isLowStock: {
-            $lte: ["$quantity", "$threshold"],
-          },
+          isLowStock: { $lte: ["$quantity", "$threshold"] },
           stockPercentage: {
             $multiply: [
               { $divide: ["$quantity", { $add: ["$threshold", 1] }] },
@@ -288,48 +181,17 @@ export class AggregationService {
           },
         },
       },
-      // Lookup distributor
-      {
-        $lookup: {
-          from: "distributors",
-          localField: "distributorId",
-          foreignField: "_id",
-          as: "distributor",
-        },
-      },
-      // Lookup pharmacy
-      {
-        $lookup: {
-          from: "pharmacies",
-          localField: "pharmacyId",
-          foreignField: "_id",
-          as: "pharmacy",
-        },
-      },
-      // Unwind
-      {
-        $unwind: {
-          path: "$distributor",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$pharmacy",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Filter low stock if requested
-      ...(filters.lowStockOnly
-        ? [
-            {
-              $match: {
-                isLowStock: true,
-              },
-            },
-          ]
-        : []),
-      // Project
+      this.createLookup("distributors", "distributorId", "distributor"),
+      this.createLookup("pharmacies", "pharmacyId", "pharmacy"),
+      this.createUnwind("$distributor"),
+      this.createUnwind("$pharmacy"),
+    ];
+
+    if (filters.lowStockOnly) {
+      pipeline.push({ $match: { isLowStock: true } });
+    }
+
+    pipeline.push(
       {
         $project: {
           _id: 1,
@@ -349,19 +211,14 @@ export class AggregationService {
           updatedAt: 1,
         },
       },
-      {
-        $sort: { isLowStock: -1, stockPercentage: 1 },
-      },
-    ];
+      { $sort: { isLowStock: -1, stockPercentage: 1 } }
+    );
 
     return pipeline;
   }
 
-  /**
-   * Get users with their associated hospital/pharmacy/distributor details
-   */
   static getUsersWithDetails(filters: any = {}) {
-    const pipeline: any[] = [
+    return [
       {
         $match: {
           ...(filters.role && { role: filters.role }),
@@ -370,53 +227,12 @@ export class AggregationService {
           ...(filters.isActive !== undefined && { isActive: filters.isActive }),
         },
       },
-      // Lookup hospital
-      {
-        $lookup: {
-          from: "hospitals",
-          localField: "hospitalId",
-          foreignField: "_id",
-          as: "hospital",
-        },
-      },
-      // Lookup pharmacy
-      {
-        $lookup: {
-          from: "pharmacies",
-          localField: "pharmacyId",
-          foreignField: "_id",
-          as: "pharmacy",
-        },
-      },
-      // Lookup distributor
-      {
-        $lookup: {
-          from: "distributors",
-          localField: "distributorId",
-          foreignField: "_id",
-          as: "distributor",
-        },
-      },
-      // Unwind
-      {
-        $unwind: {
-          path: "$hospital",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$pharmacy",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$distributor",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Project
+      this.createLookup("hospitals", "hospitalId", "hospital"),
+      this.createLookup("pharmacies", "pharmacyId", "pharmacy"),
+      this.createLookup("distributors", "distributorId", "distributor"),
+      this.createUnwind("$hospital"),
+      this.createUnwind("$pharmacy"),
+      this.createUnwind("$distributor"),
       {
         $project: {
           _id: 1,
@@ -437,19 +253,12 @@ export class AggregationService {
           "distributor.address": 1,
         },
       },
-      {
-        $sort: { createdAt: -1 },
-      },
+      { $sort: { createdAt: -1 } },
     ];
-
-    return pipeline;
   }
 
-  /**
-   * Get prescriptions with patient, doctor, and conversation details
-   */
   static getPrescriptionsWithDetails(filters: any = {}) {
-    const pipeline: any[] = [
+    return [
       {
         $match: {
           ...(filters.patientId && { patientId: filters.patientId }),
@@ -457,53 +266,12 @@ export class AggregationService {
           ...(filters.prescriptionId && { _id: filters.prescriptionId }),
         },
       },
-      // Lookup patient
-      {
-        $lookup: {
-          from: "users",
-          localField: "patientId",
-          foreignField: "_id",
-          as: "patient",
-        },
-      },
-      // Lookup doctor
-      {
-        $lookup: {
-          from: "users",
-          localField: "doctorId",
-          foreignField: "_id",
-          as: "doctor",
-        },
-      },
-      // Lookup conversation
-      {
-        $lookup: {
-          from: "conversations",
-          localField: "conversationId",
-          foreignField: "_id",
-          as: "conversation",
-        },
-      },
-      // Unwind
-      {
-        $unwind: {
-          path: "$patient",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$doctor",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $unwind: {
-          path: "$conversation",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Project
+      this.createLookup("users", "patientId", "patient"),
+      this.createLookup("users", "doctorId", "doctor"),
+      this.createLookup("conversations", "conversationId", "conversation"),
+      this.createUnwind("$patient"),
+      this.createUnwind("$doctor"),
+      this.createUnwind("$conversation"),
       {
         $project: {
           _id: 1,
@@ -521,11 +289,7 @@ export class AggregationService {
           "conversation.messages": 1,
         },
       },
-      {
-        $sort: { createdAt: -1 },
-      },
+      { $sort: { createdAt: -1 } },
     ];
-
-    return pipeline;
   }
 }

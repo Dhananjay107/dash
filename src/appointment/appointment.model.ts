@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
 export type AppointmentStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED";
+export type AppointmentChannel = "PHYSICAL" | "VIDEO";
 
 export interface IAppointment extends Document {
   hospitalId: string;
@@ -8,16 +9,14 @@ export interface IAppointment extends Document {
   patientId: string;
   scheduledAt: Date;
   status: AppointmentStatus;
-  // Patient booking details
   patientName: string;
   age: number;
   address: string;
-  issue: string; // Main issue/description
-  reportFile?: string; // File path/URL if report uploaded
-  reportFileName?: string; // Original file name
-  // Legacy fields (keeping for backward compatibility)
-  reason?: string; // Deprecated - use issue instead
-  channel: "PHYSICAL" | "VIDEO";
+  issue: string;
+  reportFile?: string;
+  reportFileName?: string;
+  reason?: string;
+  channel: AppointmentChannel;
 }
 
 const AppointmentSchema = new Schema<IAppointment>(
@@ -32,15 +31,13 @@ const AppointmentSchema = new Schema<IAppointment>(
       default: "PENDING",
       index: true,
     },
-    // Patient booking details
     patientName: { type: String, required: true },
     age: { type: Number, required: true },
     address: { type: String, required: true },
     issue: { type: String, required: true },
-    reportFile: { type: String }, // File path/URL
-    reportFileName: { type: String }, // Original file name
-    // Legacy fields (keeping for backward compatibility)
-    reason: { type: String }, // Deprecated - use issue instead
+    reportFile: { type: String },
+    reportFileName: { type: String },
+    reason: { type: String },
     channel: {
       type: String,
       enum: ["PHYSICAL", "VIDEO"],
@@ -52,5 +49,3 @@ const AppointmentSchema = new Schema<IAppointment>(
 
 export const Appointment: Model<IAppointment> =
   mongoose.models.Appointment || mongoose.model<IAppointment>("Appointment", AppointmentSchema);
-
-

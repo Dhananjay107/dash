@@ -1,36 +1,34 @@
 import { Activity, IActivity, ActivityType } from "./activity.model";
 
+interface ActivityMetadata {
+  userId?: string;
+  hospitalId?: string;
+  pharmacyId?: string;
+  distributorId?: string;
+  doctorId?: string;
+  patientId?: string;
+  [key: string]: any;
+}
+
+const DEFAULT_ACTIVITY_LIMIT = 50;
+
 export async function createActivity(
   type: ActivityType,
   title: string,
   description: string,
-  metadata?: {
-    userId?: string;
-    hospitalId?: string;
-    pharmacyId?: string;
-    distributorId?: string;
-    doctorId?: string;
-    patientId?: string;
-    [key: string]: any;
-  }
+  metadata?: ActivityMetadata
 ): Promise<IActivity> {
-  const activity = await Activity.create({
+  return await Activity.create({
     type,
     title,
     description,
     ...metadata,
   });
-
-  // Activity is now stored in database and will be fetched via polling
-  // No real-time WebSocket events needed
-
-  return activity;
 }
 
-export async function getRecentActivities(limit: number = 50) {
+export async function getRecentActivities(limit: number = DEFAULT_ACTIVITY_LIMIT): Promise<IActivity[]> {
   return Activity.find()
     .sort({ createdAt: -1 })
     .limit(limit)
-    .lean();
+    .lean() as Promise<IActivity[]>;
 }
-

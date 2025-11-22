@@ -1,85 +1,116 @@
-import { Router } from "express";
-import { DistributorOrder } from "./distributorOrder.model";
+import { Router, Request, Response } from "express";
+import { DistributorOrder, IDistributorOrder } from "./distributorOrder.model";
 import { createActivity } from "../activity/activity.service";
 
 export const router = Router();
 
-// Create distributor order manually (in addition to auto-creation)
-router.post("/", async (req, res) => {
-  const { pharmacyId, distributorId, medicineName, quantity } = req.body;
+const DEFAULT_LIMIT = 200;
+const REQUIRED_FIELDS = ["pharmacyId", "distributorId", "medicineName", "quantity"];
 
-  if (!pharmacyId || !distributorId || !medicineName || !quantity) {
-    return res.status(400).json({ message: "Missing required fields: pharmacyId, distributorId, medicineName, quantity" });
-  }
+const getOrderId = (order: IDistributorOrder): string => String(order._id);
 
-  const order = await DistributorOrder.create({
-    pharmacyId,
-    distributorId,
-    medicineName,
-    quantity,
-    status: "PENDING",
-  });
+const validateRequiredFields = (body: any): string[] => {
+  return REQUIRED_FIELDS.filter((field) => !body[field] && body[field] !== 0);
+};
 
-  await createActivity(
-    "DISTRIBUTOR_ORDER_CREATED",
-    "Distributor Order Created",
-    `Manual order created for ${medicineName} (${quantity} units) to Pharmacy ${pharmacyId}`,
-    {
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const missing = validateRequiredFields(req.body);
+    
+    if (missing.length > 0) {
+      return res.status(400).json({ 
+        message: `Missing required fields: ${missing.join(", ")}` 
+      });
+    }
+
+    const { pharmacyId, distributorId, medicineName, quantity } = req.body;
+
+    const order = await DistributorOrder.create({
       pharmacyId,
       distributorId,
-      metadata: { orderId: order._id.toString(), medicineName, quantity },
-    }
-  );
+      medicineName,
+      quantity,
+      status: "PENDING",
+    });
 
-  res.status(201).json(order);
-});
-
-// Distributor views orders assigned to them
-router.get("/", async (req, res) => {
-  const { distributorId, status } = req.query;
-  const filter: any = {};
-  if (distributorId) filter.distributorId = distributorId;
-  if (status) filter.status = status;
-
-  const orders = await DistributorOrder.find(filter).sort({ createdAt: -1 }).limit(200);
-  res.json(orders);
-});
-
-// Update order status and capture delivery proof
-router.patch("/:id", async (req, res) => {
-  const { status, deliveryOtp, deliveryProofImageUrl } = req.body;
-
-  const order = await DistributorOrder.findByIdAndUpdate(
-    req.params.id,
-    { status, deliveryOtp, deliveryProofImageUrl },
-    { new: true }
-  );
-
-  if (order && status === "DELIVERED") {
-    await createActivity(
-      "DISTRIBUTOR_ORDER_DELIVERED",
-      "Distributor Order Delivered",
-      `Order for ${order.medicineName} delivered to Pharmacy ${order.pharmacyId}`,
-      {
-        pharmacyId: order.pharmacyId,
-        distributorId: order.distributorId,
-        metadata: { orderId: order._id.toString(), medicineName: order.medicineName },
-      }
-    );
-  } else if (order && status === "DISPATCHED") {
     await createActivity(
       "DISTRIBUTOR_ORDER_CREATED",
-      "Distributor Order Dispatched",
-      `Order for ${order.medicineName} dispatched to Pharmacy ${order.pharmacyId}`,
+      "Distributor Order Created",
+      `Manual order created for ${medicineName} (${quantity} units) to Pharmacy ${pharmacyId}`,
       {
-        pharmacyId: order.pharmacyId,
-        distributorId: order.distributorId,
-        metadata: { orderId: order._id.toString(), medicineName: order.medicineName },
+        pharmacyId,
+        distributorId,
+        metadata: { orderId: getOrderId(order), medicineName, quantity },
       }
     );
-  }
 
-  res.json(order);
+    res.status(201).json(order);
+  } catch (error: any) {
+    console.error("Error creating distributor order:", error);
+    res.status(500).json({ message: "Failed to create distributor order", error: error.message });
+  }
 });
 
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const { distributorId, status } = req.query;
+    const filter: any = {};
+    
+    if (distributorId) filter.distributorId = distributorId;
+    if (status) filter.status = status;
 
+    const orders = await DistributorOrder.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(DEFAULT_LIMIT);
+    
+    res.json(orders);
+  } catch (error: any) {
+    console.error("Error fetching distributor orders:", error);
+    res.status(500).json({ message: "Failed to fetch distributor orders", error: error.message });
+  }
+});
+
+router.patch("/:id", async (req: Request, res: Response) => {
+  try {
+    const { status, deliveryOtp, deliveryProofImageUrl } = req.body;
+
+    const order = await DistributorOrder.findByIdAndUpdate(
+      req.params.id,
+      { status, deliveryOtp, deliveryProofImageUrl },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Distributor order not found" });
+    }
+
+    if (status === "DELIVERED") {
+      await createActivity(
+        "DISTRIBUTOR_ORDER_DELIVERED",
+        "Distributor Order Delivered",
+        `Order for ${order.medicineName} delivered to Pharmacy ${order.pharmacyId}`,
+        {
+          pharmacyId: order.pharmacyId,
+          distributorId: order.distributorId,
+          metadata: { orderId: getOrderId(order), medicineName: order.medicineName },
+        }
+      );
+    } else if (status === "DISPATCHED") {
+      await createActivity(
+        "DISTRIBUTOR_ORDER_CREATED",
+        "Distributor Order Dispatched",
+        `Order for ${order.medicineName} dispatched to Pharmacy ${order.pharmacyId}`,
+        {
+          pharmacyId: order.pharmacyId,
+          distributorId: order.distributorId,
+          metadata: { orderId: getOrderId(order), medicineName: order.medicineName },
+        }
+      );
+    }
+
+    res.json(order);
+  } catch (error: any) {
+    console.error("Error updating distributor order:", error);
+    res.status(500).json({ message: "Failed to update distributor order", error: error.message });
+  }
+});

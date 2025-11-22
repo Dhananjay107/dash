@@ -1,11 +1,15 @@
 import { Request, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 
+const DUPLICATE_KEY_ERROR_CODE = 11000;
+const DEFAULT_ERROR_STATUS = 500;
+const isDevelopment = process.env.NODE_ENV === "development";
+
 export class AppError extends Error {
   status: number;
   isOperational: boolean;
 
-  constructor(message: string, status: number = 500, isOperational: boolean = true) {
+  constructor(message: string, status: number = DEFAULT_ERROR_STATUS, isOperational: boolean = true) {
     super(message);
     this.status = status;
     this.isOperational = isOperational;
@@ -13,67 +17,56 @@ export class AppError extends Error {
   }
 }
 
-// Central error handler for all services
-export function errorHandler(err: any, _req: Request, res: Response, _next: NextFunction) {
+interface ErrorResponse {
+  success: false;
+  message: string;
+  errors?: string[];
+  stack?: string;
+}
+
+function createErrorResponse(message: string, errors?: string[], stack?: string): ErrorResponse {
+  const response: ErrorResponse = { success: false, message };
+  if (errors) response.errors = errors;
+  if (stack && isDevelopment) response.stack = stack;
+  return response;
+}
+
+export function errorHandler(err: any, _req: Request, res: Response, _next: NextFunction): void {
   console.error("Error:", err);
 
-  // Mongoose validation error
   if (err instanceof mongoose.Error.ValidationError) {
     const messages = Object.values(err.errors).map((e: any) => e.message);
-    return res.status(400).json({
-      success: false,
-      message: "Validation error",
-      errors: messages,
-    });
+    res.status(400).json(createErrorResponse("Validation error", messages));
+    return;
   }
 
-  // Mongoose cast error (invalid ID)
   if (err instanceof mongoose.Error.CastError) {
-    return res.status(400).json({
-      success: false,
-      message: `Invalid ${err.path}: ${err.value}`,
-    });
+    res.status(400).json(createErrorResponse(`Invalid ${err.path}: ${err.value}`));
+    return;
   }
 
-  // Duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern || {})[0];
-    return res.status(409).json({
-      success: false,
-      message: `${field} already exists`,
-    });
+  if (err.code === DUPLICATE_KEY_ERROR_CODE) {
+    const field = Object.keys(err.keyPattern || {})[0] || "field";
+    res.status(409).json(createErrorResponse(`${field} already exists`));
+    return;
   }
 
-  // JWT errors
   if (err.name === "JsonWebTokenError") {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid token",
-    });
+    res.status(401).json(createErrorResponse("Invalid token"));
+    return;
   }
 
   if (err.name === "TokenExpiredError") {
-    return res.status(401).json({
-      success: false,
-      message: "Token expired",
-    });
+    res.status(401).json(createErrorResponse("Token expired"));
+    return;
   }
 
-  // Custom AppError
   if (err instanceof AppError) {
-    return res.status(err.status).json({
-      success: false,
-      message: err.message,
-    });
+    res.status(err.status).json(createErrorResponse(err.message));
+    return;
   }
 
-  // Default error
-  const status = err.status || err.statusCode || 500;
+  const status = err.status || err.statusCode || DEFAULT_ERROR_STATUS;
   const message = err.message || "Internal server error";
-
-  res.status(status).json({
-    success: false,
-    message,
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
-  });
+  res.status(status).json(createErrorResponse(message, undefined, err.stack));
 }

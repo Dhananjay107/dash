@@ -2,10 +2,11 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export type ConversationType = "ONLINE" | "OFFLINE";
 export type MessageType = "TEXT" | "AUDIO" | "IMAGE" | "FILE";
+export type SenderRole = "DOCTOR" | "PATIENT";
 
 export interface IMessage {
   senderId: string;
-  senderRole: "DOCTOR" | "PATIENT";
+  senderRole: SenderRole;
   messageType: MessageType;
   content: string;
   timestamp: Date;
@@ -20,7 +21,7 @@ export interface IConversation extends Document {
   conversationType: ConversationType;
   messages: IMessage[];
   summary?: string;
-  prescriptionId?: string; // Link to prescription if created
+  prescriptionId?: string;
   isActive: boolean;
   startedAt: Date;
   endedAt?: Date;
@@ -66,4 +67,3 @@ const ConversationSchema = new Schema<IConversation>(
 export const Conversation: Model<IConversation> =
   mongoose.models.Conversation ||
   mongoose.model<IConversation>("Conversation", ConversationSchema);
-

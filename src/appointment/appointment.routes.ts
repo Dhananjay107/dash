@@ -1,6 +1,6 @@
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 import mongoose from "mongoose";
-import { Appointment } from "./appointment.model";
+import { Appointment, IAppointment } from "./appointment.model";
 import { createActivity } from "../activity/activity.service";
 import { sendAppointmentReminder } from "../notifications/notification.service";
 import { validateRequired } from "../shared/middleware/validation";
@@ -12,55 +12,6 @@ import { socketEvents } from "../socket/socket.server";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { Request } from "express";
-
-// Helper function to force delete using native MongoDB driver
-async function forceDeleteAppointment(appointmentId: string): Promise<{ success: boolean; deletedCount: number; error?: string }> {
-  try {
-    const db = mongoose.connection.db;
-    if (!db) {
-      return { success: false, deletedCount: 0, error: "Database connection not available" };
-    }
-
-    // Use the model's collection name to ensure we're targeting the correct collection
-    const collectionName = Appointment.collection.name;
-    const collection = db.collection(collectionName);
-    console.log(`[DELETE] Using collection: ${collectionName}`);
-    
-    let objectId: mongoose.Types.ObjectId;
-    
-    try {
-      objectId = new mongoose.Types.ObjectId(appointmentId);
-      console.log(`[DELETE] Converted to ObjectId: ${objectId}`);
-    } catch (e) {
-      return { success: false, deletedCount: 0, error: "Invalid ObjectId format" };
-    }
-
-    // Use write concern to ensure the delete is committed
-    // Note: Write concern options may vary by MongoDB version
-    const result = await collection.deleteOne(
-      { _id: objectId },
-      { w: 'majority', j: true } as any // Ensure write is acknowledged and journaled
-    );
-    
-    console.log(`[DELETE] Native delete result:`, {
-      deletedCount: result.deletedCount,
-      acknowledged: result.acknowledged
-    });
-    
-    return { 
-      success: result.deletedCount > 0, 
-      deletedCount: result.deletedCount 
-    };
-  } catch (error: any) {
-    console.error(`[DELETE] Force delete error:`, error);
-    return { 
-      success: false, 
-      deletedCount: 0, 
-      error: error.message 
-    };
-  }
-}
 
 export const router = Router();
 
@@ -87,7 +38,8 @@ const upload = multer({
 router.post(
   "/",
   validateRequired(["hospitalId", "doctorId", "patientId", "scheduledAt", "patientName", "age", "address", "issue"]),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
+    try {
     const { scheduledAt, patientName, age, address, issue } = req.body;
     const appointmentDate = new Date(scheduledAt);
     
@@ -115,15 +67,14 @@ router.post(
       throw new AppError("Issue description is required", 400);
     }
 
-    const appointment = await Appointment.create({
-      ...req.body,
-      patientName: patientName.trim(),
-      age: Number(age),
-      address: address.trim(),
-      issue: issue.trim(),
-      // Set reason to issue for backward compatibility
-      reason: issue.trim(),
-    });
+      const appointment = await Appointment.create({
+        ...req.body,
+        patientName: patientName.trim(),
+        age: Number(age),
+        address: address.trim(),
+        issue: issue.trim(),
+        reason: issue.trim(),
+      }) as IAppointment;
     
     // Emit activity
     await createActivity(
@@ -178,42 +129,55 @@ router.post(
       status: appointment.status,
     });
     
-    res.status(201).json(appointment);
+      res.status(201).json(appointment);
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        res.status(error.status).json({ message: error.message });
+      } else {
+        res.status(400).json({ message: error.message });
+      }
+    }
   }
 );
 
 // List appointments filtered by doctor/patient/hospital
-router.get("/", async (req, res) => {
-  const { doctorId, patientId, hospitalId, status } = req.query;
+router.get("/", async (req: Request, res: Response) => {
+  try {
+    const { doctorId, patientId, hospitalId, status } = req.query;
 
-  const filter: any = {};
-  if (doctorId) filter.doctorId = doctorId;
-  if (patientId) filter.patientId = patientId;
-  if (hospitalId) filter.hospitalId = hospitalId;
-  if (status) filter.status = status;
+    const filter: any = {};
+    if (doctorId) filter.doctorId = doctorId;
+    if (patientId) filter.patientId = patientId;
+    if (hospitalId) filter.hospitalId = hospitalId;
+    if (status) filter.status = status;
 
-  const items = await Appointment.find(filter).sort({ scheduledAt: 1 }).limit(100);
-  res.json(items);
+    const items = await Appointment.find(filter).sort({ scheduledAt: 1 }).limit(100);
+    res.json(items);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
+  }
 });
 
 // Get appointment by ID
-router.get("/:id", async (req, res) => {
+router.get("/:id", async (req: Request, res: Response) => {
   try {
-    const appointment = await Appointment.findById(req.params.id);
+    const appointment = await Appointment.findById(req.params.id) as IAppointment | null;
     if (!appointment) {
       throw new AppError("Appointment not found", 404);
     }
     res.json(appointment);
   } catch (error: any) {
     if (error instanceof AppError) {
-      throw error;
+      res.status(error.status).json({ message: error.message });
+    } else {
+      res.status(400).json({ message: error.message || "Failed to fetch appointment" });
     }
-    throw new AppError("Failed to fetch appointment: " + error.message, 500);
   }
 });
 
 // Update status (Doctor & Admin)
-router.patch("/:id/status", validateRequired(["status"]), async (req, res) => {
+router.patch("/:id/status", validateRequired(["status"]), async (req: Request, res: Response) => {
+  try {
   const { status } = req.body;
   
   const validStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"];
@@ -221,73 +185,173 @@ router.patch("/:id/status", validateRequired(["status"]), async (req, res) => {
     throw new AppError(`Invalid status. Must be one of: ${validStatuses.join(", ")}`, 400);
   }
 
-  const appointment = await Appointment.findByIdAndUpdate(
-    req.params.id,
-    { status },
-    { new: true }
-  );
+    const appointment = await Appointment.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    ) as IAppointment | null;
 
-  if (!appointment) {
-    throw new AppError("Appointment not found", 404);
-  }
+    if (!appointment) {
+      throw new AppError("Appointment not found", 404);
+    }
   
-  // Auto-create conversation when appointment is confirmed (for both ONLINE and OFFLINE)
-  if (status === "CONFIRMED") {
-    const existingConversation = await Conversation.findOne({
-      appointmentId: String(appointment._id),
-      isActive: true,
-    });
-
-    if (!existingConversation) {
-      const conversationType = appointment.channel === "VIDEO" ? "ONLINE" : "OFFLINE";
-      await Conversation.create({
+    // Auto-create conversation when appointment is confirmed
+    if (status === "CONFIRMED") {
+      const existingConversation = await Conversation.findOne({
         appointmentId: String(appointment._id),
-        doctorId: appointment.doctorId,
-        patientId: appointment.patientId,
-        hospitalId: appointment.hospitalId,
-        conversationType,
-        messages: [],
         isActive: true,
-        startedAt: new Date(),
       });
 
-      await createActivity(
-        "CONVERSATION_STARTED",
-        "Consultation Started",
-        `Conversation started for appointment ${String(appointment._id)}`,
-        {
+      if (!existingConversation) {
+        const conversationType = appointment.channel === "VIDEO" ? "ONLINE" : "OFFLINE";
+        await Conversation.create({
           appointmentId: String(appointment._id),
           doctorId: appointment.doctorId,
           patientId: appointment.patientId,
           hospitalId: appointment.hospitalId,
-          metadata: { conversationType },
-        }
-      );
+          conversationType,
+          messages: [],
+          isActive: true,
+          startedAt: new Date(),
+        });
+
+        await createActivity(
+          "CONVERSATION_STARTED",
+          "Consultation Started",
+          `Conversation started for appointment ${String(appointment._id)}`,
+          {
+            appointmentId: String(appointment._id),
+            doctorId: appointment.doctorId,
+            patientId: appointment.patientId,
+            hospitalId: appointment.hospitalId,
+            metadata: { conversationType },
+          }
+        );
+      }
+    }
+
+    // Emit Socket.IO events for status update
+    socketEvents.emitToUser(appointment.patientId, "appointment:statusUpdated", {
+      appointmentId: String(appointment._id),
+      status,
+      doctorId: appointment.doctorId,
+      scheduledAt: appointment.scheduledAt,
+    });
+    socketEvents.emitToUser(appointment.doctorId, "appointment:statusUpdated", {
+      appointmentId: String(appointment._id),
+      status,
+      patientId: appointment.patientId,
+      scheduledAt: appointment.scheduledAt,
+    });
+    socketEvents.emitToAdmin("appointment:statusUpdated", {
+      appointmentId: String(appointment._id),
+      status,
+      patientId: appointment.patientId,
+      doctorId: appointment.doctorId,
+    });
+
+    // End conversation when appointment is completed or cancelled
+    if (status === "COMPLETED" || status === "CANCELLED") {
+      const conversation = await Conversation.findOne({
+        appointmentId: String(appointment._id),
+        isActive: true,
+      });
+
+      if (conversation) {
+        conversation.isActive = false;
+        conversation.endedAt = new Date();
+        await conversation.save();
+      }
+    }
+
+    // Create activity
+    await createActivity(
+      "APPOINTMENT_STATUS_UPDATED",
+      "Appointment Status Updated",
+      `Appointment ${String(appointment._id)} status changed to ${status}`,
+      {
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        hospitalId: appointment.hospitalId,
+        metadata: { appointmentId: String(appointment._id), status },
+      }
+    );
+    
+    res.json(appointment);
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.status).json({ message: error.message });
+    } else {
+      res.status(400).json({ message: error.message });
     }
   }
+});
 
-  // Emit Socket.IO events for status update
-  socketEvents.emitToUser(appointment.patientId, "appointment:statusUpdated", {
-    appointmentId: String(appointment._id),
-    status,
-    doctorId: appointment.doctorId,
-    scheduledAt: appointment.scheduledAt,
-  });
-  socketEvents.emitToUser(appointment.doctorId, "appointment:statusUpdated", {
-    appointmentId: String(appointment._id),
-    status,
-    patientId: appointment.patientId,
-    scheduledAt: appointment.scheduledAt,
-  });
-  socketEvents.emitToAdmin("appointment:statusUpdated", {
-    appointmentId: String(appointment._id),
-    status,
-    patientId: appointment.patientId,
-    doctorId: appointment.doctorId,
-  });
+// Reschedule appointment (Doctor & Admin)
+router.patch("/:id/reschedule", validateRequired(["scheduledAt"]), async (req: Request, res: Response) => {
+  try {
+    const { scheduledAt } = req.body;
+    const newDate = new Date(scheduledAt);
+    
+    if (isNaN(newDate.getTime())) {
+      throw new AppError("Invalid scheduledAt date", 400);
+    }
 
-  // End conversation when appointment is completed or cancelled
-  if (status === "COMPLETED" || status === "CANCELLED") {
+    const appointment = await Appointment.findByIdAndUpdate(
+      req.params.id,
+      { scheduledAt: newDate },
+      { new: true }
+    ) as IAppointment | null;
+
+    if (!appointment) {
+      throw new AppError("Appointment not found", 404);
+    }
+    
+    await createActivity(
+      "APPOINTMENT_RESCHEDULED",
+      "Appointment Rescheduled",
+      `Appointment rescheduled to ${newDate.toLocaleString()}`,
+      {
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        hospitalId: appointment.hospitalId,
+        metadata: { appointmentId: String(appointment._id), newTime: scheduledAt },
+      }
+    );
+    
+    res.json(appointment);
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.status).json({ message: error.message });
+    } else {
+      res.status(400).json({ message: error.message });
+    }
+  }
+});
+
+// Cancel appointment (Doctor & Admin)
+router.patch("/:id/cancel", validateRequired(["cancellationReason"]), async (req: Request, res: Response) => {
+  try {
+    const { cancellationReason } = req.body;
+    
+    if (!cancellationReason || cancellationReason.trim().length === 0) {
+      throw new AppError("Cancellation reason is required", 400);
+    }
+
+    const appointment = await Appointment.findByIdAndUpdate(
+      req.params.id,
+      { 
+        status: "CANCELLED",
+        reason: cancellationReason.trim()
+      },
+      { new: true }
+    ) as IAppointment | null;
+
+    if (!appointment) {
+      throw new AppError("Appointment not found", 404);
+    }
+
+    // End conversation if active
     const conversation = await Conversation.findOne({
       appointmentId: String(appointment._id),
       isActive: true,
@@ -298,170 +362,100 @@ router.patch("/:id/status", validateRequired(["status"]), async (req, res) => {
       conversation.endedAt = new Date();
       await conversation.save();
     }
-  }
-
-  // Create activity (will be fetched via polling on frontend)
-  await createActivity(
-    "APPOINTMENT_STATUS_UPDATED",
-    "Appointment Status Updated",
-        `Appointment ${String(appointment._id)} status changed to ${status}`,
-    {
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      hospitalId: appointment.hospitalId,
-      metadata: { appointmentId: String(appointment._id), status },
+    
+    await createActivity(
+      "APPOINTMENT_CANCELLED",
+      "Appointment Cancelled",
+      `Appointment cancelled for Patient ${appointment.patientId}. Reason: ${cancellationReason}`,
+      {
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        hospitalId: appointment.hospitalId,
+        metadata: { appointmentId: String(appointment._id), cancellationReason },
+      }
+    );
+    
+    res.json(appointment);
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      res.status(error.status).json({ message: error.message });
+    } else {
+      res.status(400).json({ message: error.message });
     }
-  );
-  
-  res.json(appointment);
-});
-
-// Reschedule appointment (Doctor & Admin)
-router.patch("/:id/reschedule", validateRequired(["scheduledAt"]), async (req, res) => {
-  const { scheduledAt } = req.body;
-  const newDate = new Date(scheduledAt);
-  
-  if (isNaN(newDate.getTime())) {
-    throw new AppError("Invalid scheduledAt date", 400);
   }
-
-  const appointment = await Appointment.findByIdAndUpdate(
-    req.params.id,
-    { scheduledAt: newDate },
-    { new: true }
-  );
-
-  if (!appointment) {
-    throw new AppError("Appointment not found", 404);
-  }
-  
-  await createActivity(
-    "APPOINTMENT_RESCHEDULED",
-    "Appointment Rescheduled",
-    `Appointment rescheduled to ${newDate.toLocaleString()}`,
-    {
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      hospitalId: appointment.hospitalId,
-      metadata: { appointmentId: String(appointment._id), newTime: scheduledAt },
-    }
-  );
-  
-  res.json(appointment);
-});
-
-// Cancel appointment (Doctor & Admin)
-router.patch("/:id/cancel", validateRequired(["cancellationReason"]), async (req, res) => {
-  const { cancellationReason } = req.body;
-  
-  if (!cancellationReason || cancellationReason.trim().length === 0) {
-    throw new AppError("Cancellation reason is required", 400);
-  }
-
-  const appointment = await Appointment.findByIdAndUpdate(
-    req.params.id,
-    { 
-      status: "CANCELLED",
-      reason: cancellationReason.trim() // Store cancellation reason in reason field
-    },
-    { new: true }
-  );
-
-  if (!appointment) {
-    throw new AppError("Appointment not found", 404);
-  }
-
-  // End conversation if active
-  const conversation = await Conversation.findOne({
-    appointmentId: String(appointment._id),
-    isActive: true,
-  });
-
-  if (conversation) {
-    conversation.isActive = false;
-    conversation.endedAt = new Date();
-    await conversation.save();
-  }
-  
-  await createActivity(
-    "APPOINTMENT_CANCELLED",
-    "Appointment Cancelled",
-    `Appointment cancelled for Patient ${appointment.patientId}. Reason: ${cancellationReason}`,
-    {
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      hospitalId: appointment.hospitalId,
-      metadata: { appointmentId: String(appointment._id), cancellationReason },
-    }
-  );
-  
-  res.json(appointment);
 });
 
 // Upload report file for appointment
 router.post(
   "/:id/upload-report",
   upload.single("report"),
-  async (req: Request, res) => {
-    const file = (req as any).file;
-    if (!file) {
-      throw new AppError("No file uploaded", 400);
-    }
-
-    const appointment = await Appointment.findById(req.params.id);
-    if (!appointment) {
-      // Delete uploaded file if appointment not found
-      if (file.path) {
-        fs.unlinkSync(file.path);
+  async (req: Request, res: Response) => {
+    try {
+      const file = (req as any).file;
+      if (!file) {
+        throw new AppError("No file uploaded", 400);
       }
-      throw new AppError("Appointment not found", 404);
-    }
 
-    // Delete old file if exists
-    if (appointment.reportFile && fs.existsSync(appointment.reportFile)) {
-      try {
-        fs.unlinkSync(appointment.reportFile);
-      } catch (error) {
-        console.error("Failed to delete old report file:", error);
+      const appointment = await Appointment.findById(req.params.id) as IAppointment | null;
+      if (!appointment) {
+        if (file.path) {
+          fs.unlinkSync(file.path);
+        }
+        throw new AppError("Appointment not found", 404);
       }
-    }
 
-    // Update appointment with file info
-    appointment.reportFile = file.path;
-    appointment.reportFileName = file.originalname;
-    await appointment.save();
+      // Delete old file if exists
+      if (appointment.reportFile && fs.existsSync(appointment.reportFile)) {
+        try {
+          fs.unlinkSync(appointment.reportFile);
+        } catch (error) {
+          console.error("Failed to delete old report file:", error);
+        }
+      }
 
-    await createActivity(
-      "APPOINTMENT_REPORT_UPLOADED",
-      "Report Uploaded",
-      `Patient uploaded report for appointment ${String(appointment._id)}`,
-      {
+      // Update appointment with file info
+      appointment.reportFile = file.path;
+      appointment.reportFileName = file.originalname;
+      await appointment.save();
+
+      await createActivity(
+        "APPOINTMENT_REPORT_UPLOADED",
+        "Report Uploaded",
+        `Patient uploaded report for appointment ${String(appointment._id)}`,
+        {
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          hospitalId: appointment.hospitalId,
+          metadata: { appointmentId: String(appointment._id), fileName: file.originalname },
+        }
+      );
+
+      // Notify doctor
+      socketEvents.emitToUser(appointment.doctorId, "appointment:reportUploaded", {
+        appointmentId: String(appointment._id),
         patientId: appointment.patientId,
-        doctorId: appointment.doctorId,
-        hospitalId: appointment.hospitalId,
-        metadata: { appointmentId: String(appointment._id), fileName: file.originalname },
+        fileName: file.originalname,
+      });
+
+      res.json({
+        message: "Report uploaded successfully",
+        fileUrl: file.path,
+        fileName: file.originalname,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        res.status(error.status).json({ message: error.message });
+      } else {
+        res.status(400).json({ message: error.message });
       }
-    );
-
-    // Notify doctor
-    socketEvents.emitToUser(appointment.doctorId, "appointment:reportUploaded", {
-      appointmentId: String(appointment._id),
-      patientId: appointment.patientId,
-      fileName: file.originalname,
-    });
-
-    res.json({
-      message: "Report uploaded successfully",
-      fileUrl: file.path,
-      fileName: file.originalname,
-    });
+    }
   }
 );
 
-// Get report file for appointment (must be before /:id route)
-router.get("/:id/report", async (req, res) => {
+// Get report file for appointment
+router.get("/:id/report", async (req: Request, res: Response) => {
   try {
-    const appointment = await Appointment.findById(req.params.id);
+    const appointment = await Appointment.findById(req.params.id) as IAppointment | null;
     if (!appointment) {
       throw new AppError("Appointment not found", 404);
     }
@@ -493,14 +487,15 @@ router.get("/:id/report", async (req, res) => {
     res.sendFile(path.resolve(filePath));
   } catch (error: any) {
     if (error instanceof AppError) {
-      throw error;
+      res.status(error.status).json({ message: error.message });
+    } else {
+      res.status(400).json({ message: error.message || "Failed to fetch report file" });
     }
-    throw new AppError("Failed to fetch report file: " + error.message, 500);
   }
 });
 
 // Delete appointment (Patient can delete their own, Doctor/Admin can delete any)
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const appointmentId = req.params.id;
     console.log(`[DELETE] Attempting to delete appointment with ID: ${appointmentId}`);
@@ -514,7 +509,7 @@ router.delete("/:id", async (req, res) => {
     }
 
     // Find the appointment
-    const appointment = await Appointment.findById(appointmentId);
+    const appointment = await Appointment.findById(appointmentId) as IAppointment | null;
     
     if (!appointment) {
       console.log(`[DELETE] Appointment not found: ${appointmentId}`);
@@ -601,67 +596,26 @@ router.delete("/:id", async (req, res) => {
       }
     }
 
-    // 4. Delete the appointment from database - Use direct MongoDB collection method
+    // 4. Delete the appointment from database - Simplified and more reliable approach
     console.log(`[DELETE] Attempting to delete appointment with ObjectId: ${appointmentObjectId}`);
     console.log(`[DELETE] Appointment ID string: ${appointmentIdStr}`);
-    console.log(`[DELETE] Appointment ObjectId: ${appointmentObjectId}`);
     
     let deleteResult: any = null;
     let deleted = false;
     
-    // PRIMARY METHOD: Use force delete helper (direct MongoDB native driver)
+    // PRIMARY METHOD: Use findByIdAndDelete (simplest and most reliable)
     try {
-      const forceResult = await forceDeleteAppointment(appointmentId);
-      console.log(`[DELETE] Force delete result:`, forceResult);
-      
-      if (forceResult.success && forceResult.deletedCount > 0) {
+      const deletedDoc = await Appointment.findByIdAndDelete(appointmentObjectId);
+      if (deletedDoc) {
         deleted = true;
-        deleteResult = { deletedCount: forceResult.deletedCount, acknowledged: true };
-        console.log(`[DELETE] ✅ Document deleted successfully via force delete (native MongoDB)`);
-      } else if (forceResult.deletedCount === 0) {
-        console.warn(`[DELETE] ⚠️ Force delete returned deletedCount: 0 - document may not exist or already deleted`);
-      } else {
-        console.error(`[DELETE] Force delete failed:`, forceResult.error);
+        deleteResult = { deletedCount: 1, acknowledged: true };
+        console.log(`[DELETE] ✅ Document deleted successfully via findByIdAndDelete`);
       }
     } catch (error: any) {
-      console.error(`[DELETE] Force delete exception:`, error.message, error);
-      // Continue to fallback methods
+      console.error(`[DELETE] findByIdAndDelete failed:`, error.message);
     }
     
-    // FALLBACK: Use MongoDB native collection.deleteOne (bypasses Mongoose hooks)
-    if (!deleted) {
-      try {
-        // Convert to ObjectId if it's a valid MongoDB ObjectId
-        let deleteQuery: any;
-        try {
-          const objectId = new mongoose.Types.ObjectId(appointmentId);
-          deleteQuery = { _id: objectId };
-          console.log(`[DELETE] Using ObjectId: ${objectId}`);
-        } catch (e) {
-          // If ObjectId conversion fails, try with string
-          deleteQuery = { _id: appointmentId };
-          console.log(`[DELETE] Using string ID: ${appointmentId}`);
-        }
-        
-        // Use collection.deleteOne directly (bypasses Mongoose hooks)
-        deleteResult = await Appointment.collection.deleteOne(deleteQuery);
-        console.log(`[DELETE] Collection.deleteOne result:`, {
-          deletedCount: deleteResult.deletedCount,
-          acknowledged: deleteResult.acknowledged
-        });
-        
-        if (deleteResult.deletedCount > 0) {
-          deleted = true;
-          console.log(`[DELETE] ✅ Document deleted successfully via collection.deleteOne`);
-        } else {
-          console.warn(`[DELETE] ⚠️ deleteOne returned deletedCount: 0 - document may not exist or query didn't match`);
-        }
-      } catch (error: any) {
-        console.error(`[DELETE] Collection.deleteOne failed:`, error.message, error);
-      }
-    }
-    
-    // FALLBACK METHOD 1: Try Mongoose deleteOne
+    // FALLBACK METHOD 1: Try deleteOne with ObjectId
     if (!deleted) {
       try {
         deleteResult = await Appointment.deleteOne({ _id: appointmentObjectId });
@@ -678,32 +632,21 @@ router.delete("/:id", async (req, res) => {
       }
     }
     
-    // FALLBACK METHOD 2: Try with string ID
+    // FALLBACK METHOD 2: Use native MongoDB collection (bypasses Mongoose)
     if (!deleted) {
       try {
-        deleteResult = await Appointment.deleteOne({ _id: appointmentId });
-        console.log(`[DELETE] Mongoose deleteOne (string ID) result:`, {
-          deletedCount: deleteResult.deletedCount
+        const objectId = new mongoose.Types.ObjectId(appointmentId);
+        deleteResult = await Appointment.collection.deleteOne({ _id: objectId });
+        console.log(`[DELETE] Collection.deleteOne result:`, {
+          deletedCount: deleteResult.deletedCount,
+          acknowledged: deleteResult.acknowledged
         });
         if (deleteResult.deletedCount > 0) {
           deleted = true;
+          console.log(`[DELETE] ✅ Document deleted successfully via collection.deleteOne`);
         }
       } catch (error: any) {
-        console.error(`[DELETE] Mongoose deleteOne (string) failed:`, error.message);
-      }
-    }
-    
-    // FALLBACK METHOD 3: Try findByIdAndDelete
-    if (!deleted) {
-      try {
-        const deletedDoc = await Appointment.findByIdAndDelete(appointmentObjectId);
-        if (deletedDoc) {
-          deleted = true;
-          deleteResult = { deletedCount: 1, acknowledged: true };
-          console.log(`[DELETE] ✅ Document deleted successfully via findByIdAndDelete`);
-        }
-      } catch (error: any) {
-        console.error(`[DELETE] findByIdAndDelete failed:`, error.message);
+        console.error(`[DELETE] Collection.deleteOne failed:`, error.message);
       }
     }
     
@@ -715,33 +658,24 @@ router.delete("/:id", async (req, res) => {
       // Verify deletion by querying the database
       const verifyDelete = await Appointment.findById(appointmentObjectId);
       if (verifyDelete) {
-        console.error(`[DELETE] ⚠️ CRITICAL: Document still exists after deletion! Attempting force delete...`);
+        console.error(`[DELETE] ⚠️ WARNING: Document still exists after deletion! Retrying...`);
         
-        // Force delete using collection with multiple attempts
+        // Retry with native collection delete
         try {
           const objectId = new mongoose.Types.ObjectId(appointmentId);
-          const forceResult = await Appointment.collection.deleteOne({ _id: objectId });
-          console.log(`[DELETE] Force delete result:`, forceResult);
+          const retryResult = await Appointment.collection.deleteOne({ _id: objectId });
+          console.log(`[DELETE] Retry delete result:`, retryResult);
           
-          // Wait and verify again
-          await new Promise(resolve => setTimeout(resolve, 200));
-          const verifyAgain = await Appointment.findById(appointmentObjectId);
-          
-          if (verifyAgain) {
-            console.error(`[DELETE] ❌ FAILED: Document still exists after force delete!`);
+          if (retryResult.deletedCount === 0) {
+            console.error(`[DELETE] ❌ FAILED: Document still exists after retry`);
             return res.status(500).json({ 
               message: "Appointment deletion failed - document still exists in database",
               error: "Deletion verification failed",
-              appointmentId: appointmentIdStr,
-              details: "Document was not removed from database despite successful delete operation"
+              appointmentId: appointmentIdStr
             });
-          } else {
-            console.log(`[DELETE] ✅ Force delete successful - document removed`);
-            deleted = true;
-            deleteResult = { deletedCount: 1, acknowledged: true };
           }
         } catch (error: any) {
-          console.error(`[DELETE] Force delete failed:`, error.message);
+          console.error(`[DELETE] Retry delete failed:`, error.message);
           return res.status(500).json({ 
             message: "Appointment deletion verification failed: " + error.message,
             error: "Verification error",
@@ -749,7 +683,7 @@ router.delete("/:id", async (req, res) => {
           });
         }
       } else {
-        console.log(`[DELETE] ✅ Verification passed - appointment is completely deleted from database`);
+        console.log(`[DELETE] ✅ Verification passed - appointment is completely deleted`);
       }
     } else {
       // Check if document actually exists
@@ -758,14 +692,11 @@ router.delete("/:id", async (req, res) => {
         // Document doesn't exist, so deletion is successful
         console.log(`[DELETE] ✅ Document does not exist - considered deleted`);
         deleted = true;
-        if (!deleteResult) {
-          deleteResult = { deletedCount: 1, acknowledged: true };
-        }
+        deleteResult = { deletedCount: 1, acknowledged: true };
       } else {
-        console.error(`[DELETE] ❌ ALL METHODS FAILED: Could not delete appointment ${appointmentIdStr}`);
-        console.error(`[DELETE] Document still exists in database`);
+        console.error(`[DELETE] ❌ FAILED: Could not delete appointment ${appointmentIdStr}`);
         return res.status(500).json({ 
-          message: "Failed to delete appointment from database after trying all methods",
+          message: "Failed to delete appointment from database",
           error: "Deletion failed",
           appointmentId: appointmentIdStr,
           details: "All deletion methods returned deletedCount: 0"
@@ -838,4 +769,3 @@ router.delete("/:id", async (req, res) => {
     });
   }
 });
-

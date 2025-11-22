@@ -24,10 +24,7 @@ const InventorySchema = new Schema<IInventoryItem>(
 );
 
 InventorySchema.index({ pharmacyId: 1, medicineName: 1 });
-// Text search index for full-text search
 InventorySchema.index({ medicineName: "text", batchNumber: "text" });
 
 export const InventoryItem: Model<IInventoryItem> =
   mongoose.models.InventoryItem || mongoose.model<IInventoryItem>("InventoryItem", InventorySchema);
-
-

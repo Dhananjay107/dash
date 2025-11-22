@@ -1,166 +1,223 @@
-import { Router } from "express";
-import { FinanceEntry } from "./finance.model";
+import { Router, Request, Response } from "express";
+import { FinanceEntry, IFinanceEntry } from "./finance.model";
 
 export const router = Router();
 
-// Create finance entry from other services (e.g., medicine sale, consultation)
-router.post("/", async (req, res) => {
-  const entry = await FinanceEntry.create(req.body);
-  res.status(201).json(entry);
-});
+const DEFAULT_LIMIT = 1000;
+const DEFAULT_PERIOD = "MONTHLY";
 
-// General reports endpoint (alias for summary with more options)
-router.get("/reports", async (req, res) => {
-  const { from, to, hospitalId, pharmacyId, type } = req.query;
-  const filter: any = {};
-  if (from || to) {
-    filter.occurredAt = {};
-    if (from) filter.occurredAt.$gte = new Date(from as string);
-    if (to) filter.occurredAt.$lte = new Date(to as string);
-  }
-  if (hospitalId) filter.hospitalId = hospitalId;
-  if (pharmacyId) filter.pharmacyId = pharmacyId;
-  if (type) filter.type = type;
+interface DateFilter {
+  $gte?: Date;
+  $lte?: Date;
+}
 
-  const entries = await FinanceEntry.find(filter).limit(1000);
-  const total = entries.reduce((sum, e) => sum + e.amount, 0);
-  const revenue = entries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
-  const expenses = entries.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+interface FinanceSummary {
+  revenue: number;
+  expenses: number;
+  netProfit: number;
+  count: number;
+}
 
-  res.json({
-    total,
+const createDateFilter = (from?: string, to?: string): DateFilter | null => {
+  if (!from && !to) return null;
+  
+  const filter: DateFilter = {};
+  if (from) filter.$gte = new Date(from);
+  if (to) filter.$lte = new Date(to);
+  return filter;
+};
+
+const calculateFinanceSummary = (entries: IFinanceEntry[]): FinanceSummary => {
+  let revenue = 0;
+  let expenses = 0;
+
+  entries.forEach((entry) => {
+    if (entry.amount > 0) {
+      revenue += entry.amount;
+    } else {
+      expenses += Math.abs(entry.amount);
+    }
+  });
+
+  return {
     revenue,
     expenses,
     netProfit: revenue - expenses,
     count: entries.length,
-    entries,
-  });
+  };
+};
+
+const getPeriodKey = (date: Date, period: string): string => {
+  if (period === "DAILY") {
+    return date.toISOString().split("T")[0];
+  } else if (period === "MONTHLY") {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  } else {
+    return String(date.getFullYear());
+  }
+};
+
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const entry = await FinanceEntry.create(req.body);
+    res.status(201).json(entry);
+  } catch (error: any) {
+    console.error("Error creating finance entry:", error);
+    res.status(500).json({ message: "Failed to create finance entry", error: error.message });
+  }
 });
 
-// Basic aggregated view
-router.get("/summary", async (req, res) => {
-  const { from, to, hospitalId, pharmacyId } = req.query;
-  const filter: any = {};
-  if (from || to) {
-    filter.occurredAt = {};
-    if (from) filter.occurredAt.$gte = new Date(from as string);
-    if (to) filter.occurredAt.$lte = new Date(to as string);
+router.get("/reports", async (req: Request, res: Response) => {
+  try {
+    const { from, to, hospitalId, pharmacyId, type } = req.query;
+    const filter: any = {};
+    
+    const dateFilter = createDateFilter(from as string, to as string);
+    if (dateFilter) filter.occurredAt = dateFilter;
+    
+    if (hospitalId) filter.hospitalId = hospitalId;
+    if (pharmacyId) filter.pharmacyId = pharmacyId;
+    if (type) filter.type = type;
+
+    const entries = await FinanceEntry.find(filter).limit(DEFAULT_LIMIT);
+    const summary = calculateFinanceSummary(entries);
+
+    res.json({
+      ...summary,
+      total: summary.revenue - summary.expenses,
+      entries,
+    });
+  } catch (error: any) {
+    console.error("Error fetching finance reports:", error);
+    res.status(500).json({ message: "Failed to fetch finance reports", error: error.message });
   }
-  if (hospitalId) filter.hospitalId = hospitalId;
-  if (pharmacyId) filter.pharmacyId = pharmacyId;
-
-  const entries = await FinanceEntry.find(filter).limit(1000);
-  const total = entries.reduce((sum, e) => sum + e.amount, 0);
-
-  res.json({ total, count: entries.length, entries });
 });
 
-// Hospital-wise reports
-router.get("/reports/hospital/:id", async (req, res) => {
-  const { from, to } = req.query;
-  const filter: any = { hospitalId: req.params.id };
-  if (from || to) {
-    filter.occurredAt = {};
-    if (from) filter.occurredAt.$gte = new Date(from as string);
-    if (to) filter.occurredAt.$lte = new Date(to as string);
+router.get("/summary", async (req: Request, res: Response) => {
+  try {
+    const { from, to, hospitalId, pharmacyId } = req.query;
+    const filter: any = {};
+    
+    const dateFilter = createDateFilter(from as string, to as string);
+    if (dateFilter) filter.occurredAt = dateFilter;
+    
+    if (hospitalId) filter.hospitalId = hospitalId;
+    if (pharmacyId) filter.pharmacyId = pharmacyId;
+
+    const entries = await FinanceEntry.find(filter).limit(DEFAULT_LIMIT);
+    const total = entries.reduce((sum, e) => sum + e.amount, 0);
+
+    res.json({ total, count: entries.length, entries });
+  } catch (error: any) {
+    console.error("Error fetching finance summary:", error);
+    res.status(500).json({ message: "Failed to fetch finance summary", error: error.message });
   }
-
-  const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
-  const revenue = entries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
-  const expenses = entries.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
-
-  res.json({
-    hospitalId: req.params.id,
-    totalRevenue: revenue,
-    totalExpenses: expenses,
-    netProfit: revenue - expenses,
-    count: entries.length,
-    entries,
-  });
 });
 
-// Unit-wise reports (Doctors, Pharmacy, Distributors)
-router.get("/reports/unit/:type", async (req, res) => {
-  const { from, to, id } = req.query;
-  const filter: any = {};
-  if (from || to) {
-    filter.occurredAt = {};
-    if (from) filter.occurredAt.$gte = new Date(from as string);
-    if (to) filter.occurredAt.$lte = new Date(to as string);
+router.get("/reports/hospital/:id", async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query;
+    const filter: any = { hospitalId: req.params.id };
+    
+    const dateFilter = createDateFilter(from as string, to as string);
+    if (dateFilter) filter.occurredAt = dateFilter;
+
+    const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
+    const summary = calculateFinanceSummary(entries);
+
+    res.json({
+      hospitalId: req.params.id,
+      totalRevenue: summary.revenue,
+      totalExpenses: summary.expenses,
+      netProfit: summary.netProfit,
+      count: summary.count,
+      entries,
+    });
+  } catch (error: any) {
+    console.error("Error fetching hospital finance report:", error);
+    res.status(500).json({ message: "Failed to fetch hospital finance report", error: error.message });
   }
-
-  if (req.params.type === "DOCTOR" && id) {
-    filter.doctorId = id;
-  } else if (req.params.type === "PHARMACY" && id) {
-    filter.pharmacyId = id;
-  } else if (req.params.type === "DISTRIBUTOR" && id) {
-    filter.distributorId = id;
-  }
-
-  const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
-  const revenue = entries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
-  const expenses = entries.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
-
-  res.json({
-    unitType: req.params.type,
-    unitId: id,
-    totalRevenue: revenue,
-    totalExpenses: expenses,
-    netProfit: revenue - expenses,
-    count: entries.length,
-    entries,
-  });
 });
 
-// Time-wise reports (Daily, Monthly, Yearly)
-router.get("/reports/time", async (req, res) => {
-  const { period = "MONTHLY", from, to } = req.query;
-  const filter: any = {};
-  if (from || to) {
-    filter.occurredAt = {};
-    if (from) filter.occurredAt.$gte = new Date(from as string);
-    if (to) filter.occurredAt.$lte = new Date(to as string);
-  }
+router.get("/reports/unit/:type", async (req: Request, res: Response) => {
+  try {
+    const { from, to, id } = req.query;
+    const filter: any = {};
+    
+    const dateFilter = createDateFilter(from as string, to as string);
+    if (dateFilter) filter.occurredAt = dateFilter;
 
-  const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
-  
-  // Group by time period
-  const grouped: Record<string, { revenue: number; expenses: number; count: number }> = {};
-  
-  entries.forEach((entry) => {
-    let key = "";
-    const date = new Date(entry.occurredAt);
-    if (period === "DAILY") {
-      key = date.toISOString().split("T")[0];
-    } else if (period === "MONTHLY") {
-      key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    } else if (period === "YEARLY") {
-      key = String(date.getFullYear());
+    const unitType = req.params.type;
+    if (unitType === "DOCTOR" && id) {
+      filter.doctorId = id;
+    } else if (unitType === "PHARMACY" && id) {
+      filter.pharmacyId = id;
+    } else if (unitType === "DISTRIBUTOR" && id) {
+      filter.distributorId = id;
     }
 
-    if (!grouped[key]) {
-      grouped[key] = { revenue: 0, expenses: 0, count: 0 };
-    }
-    if (entry.amount > 0) {
-      grouped[key].revenue += entry.amount;
-    } else {
-      grouped[key].expenses += Math.abs(entry.amount);
-    }
-    grouped[key].count += 1;
-  });
+    const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
+    const summary = calculateFinanceSummary(entries);
 
-  res.json({
-    period,
-    summary: Object.entries(grouped).map(([period, data]) => ({
+    res.json({
+      unitType,
+      unitId: id,
+      totalRevenue: summary.revenue,
+      totalExpenses: summary.expenses,
+      netProfit: summary.netProfit,
+      count: summary.count,
+      entries,
+    });
+  } catch (error: any) {
+    console.error("Error fetching unit finance report:", error);
+    res.status(500).json({ message: "Failed to fetch unit finance report", error: error.message });
+  }
+});
+
+router.get("/reports/time", async (req: Request, res: Response) => {
+  try {
+    const { period = DEFAULT_PERIOD, from, to } = req.query;
+    const filter: any = {};
+    
+    const dateFilter = createDateFilter(from as string, to as string);
+    if (dateFilter) filter.occurredAt = dateFilter;
+
+    const entries = await FinanceEntry.find(filter).sort({ occurredAt: -1 });
+    
+    const grouped: Record<string, { revenue: number; expenses: number; count: number }> = {};
+    
+    entries.forEach((entry) => {
+      const date = new Date(entry.occurredAt);
+      const key = getPeriodKey(date, period as string);
+
+      if (!grouped[key]) {
+        grouped[key] = { revenue: 0, expenses: 0, count: 0 };
+      }
+      
+      if (entry.amount > 0) {
+        grouped[key].revenue += entry.amount;
+      } else {
+        grouped[key].expenses += Math.abs(entry.amount);
+      }
+      grouped[key].count += 1;
+    });
+
+    const summary = calculateFinanceSummary(entries);
+
+    res.json({
       period,
-      revenue: data.revenue,
-      expenses: data.expenses,
-      netProfit: data.revenue - data.expenses,
-      count: data.count,
-    })),
-    totalRevenue: entries.filter((e) => e.amount > 0).reduce((sum, e) => sum + e.amount, 0),
-    totalExpenses: entries.filter((e) => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0),
-  });
+      summary: Object.entries(grouped).map(([periodKey, data]) => ({
+        period: periodKey,
+        revenue: data.revenue,
+        expenses: data.expenses,
+        netProfit: data.revenue - data.expenses,
+        count: data.count,
+      })),
+      totalRevenue: summary.revenue,
+      totalExpenses: summary.expenses,
+    });
+  } catch (error: any) {
+    console.error("Error fetching time-based finance report:", error);
+    res.status(500).json({ message: "Failed to fetch time-based finance report", error: error.message });
+  }
 });
-
-

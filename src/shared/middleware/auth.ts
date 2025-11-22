@@ -13,33 +13,42 @@ declare module "express-serve-static-core" {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+const BEARER_PREFIX = "Bearer ";
+const BEARER_PREFIX_LENGTH = BEARER_PREFIX.length;
+
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Missing or invalid authorization header" });
+  
+  if (!header?.startsWith(BEARER_PREFIX)) {
+    res.status(401).json({ message: "Missing or invalid authorization header" });
+    return;
   }
 
-  const token = header.substring("Bearer ".length);
+  const token = header.substring(BEARER_PREFIX_LENGTH);
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
     req.user = decoded;
     next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token" });
+  } catch (error) {
+    res.status(401).json({ message: "Invalid or expired token" });
   }
 }
 
 export function requireRole(roles: string[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  const allowedRoles = new Set(roles);
+  
+  return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
-      return res.status(401).json({ message: "Unauthenticated" });
+      res.status(401).json({ message: "Unauthenticated" });
+      return;
     }
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ message: "Forbidden" });
+    
+    if (!allowedRoles.has(req.user.role)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
     }
+    
     next();
   };
 }
-
-

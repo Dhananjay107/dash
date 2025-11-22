@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 import { Appointment } from "../appointment/appointment.model";
 import { Order } from "../order/order.model";
 import { FinanceEntry } from "../finance/finance.model";
@@ -18,7 +18,7 @@ export const router = Router();
  */
 
 // Health check
-router.get("/health", (_req, res) => {
+router.get("/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -28,7 +28,7 @@ router.get("/health", (_req, res) => {
 });
 
 // Get public hospitals list
-router.get("/hospitals", async (_req, res) => {
+router.get("/hospitals", async (_req: Request, res: Response) => {
   try {
     const hospitals = await Hospital.find({ isActive: true })
       .select("name address phone")
@@ -49,7 +49,7 @@ router.get("/hospitals", async (_req, res) => {
 });
 
 // Get public pharmacies list
-router.get("/pharmacies", async (_req, res) => {
+router.get("/pharmacies", async (_req: Request, res: Response) => {
   try {
     const pharmacies = await Pharmacy.find({ isActive: true })
       .select("name address phone")
@@ -70,7 +70,7 @@ router.get("/pharmacies", async (_req, res) => {
 });
 
 // Search doctors (public)
-router.get("/doctors", async (req, res) => {
+router.get("/doctors", async (req: Request, res: Response) => {
   try {
     const { search, hospitalId, limit = 20 } = req.query;
     
@@ -107,7 +107,7 @@ router.get("/doctors", async (req, res) => {
 });
 
 // Search medicines (public - inventory search)
-router.get("/medicines", async (req, res) => {
+router.get("/medicines", async (req: Request, res: Response) => {
   try {
     const { search, pharmacyId, limit = 50 } = req.query;
     
@@ -141,7 +141,7 @@ router.get("/medicines", async (req, res) => {
 });
 
 // Get appointments with details using aggregation (public - with filters)
-router.get("/appointments", async (req, res) => {
+router.get("/appointments", async (req: Request, res: Response) => {
   try {
     const filters = {
       patientId: req.query.patientId as string,
@@ -153,7 +153,7 @@ router.get("/appointments", async (req, res) => {
     };
     
     const pipeline = AggregationService.getAppointmentsWithDetails(filters);
-    const appointments = await Appointment.aggregate(pipeline);
+    const appointments = await Appointment.aggregate(pipeline as any[]);
     
     res.json({
       success: true,
@@ -170,7 +170,7 @@ router.get("/appointments", async (req, res) => {
 });
 
 // Get orders with details using aggregation (public - with filters)
-router.get("/orders", async (req, res) => {
+router.get("/orders", async (req: Request, res: Response) => {
   try {
     const filters = {
       patientId: req.query.patientId as string,
@@ -181,7 +181,7 @@ router.get("/orders", async (req, res) => {
     };
     
     const pipeline = AggregationService.getOrdersWithDetails(filters);
-    const orders = await Order.aggregate(pipeline);
+    const orders = await Order.aggregate(pipeline as any[]);
     
     res.json({
       success: true,
@@ -198,7 +198,7 @@ router.get("/orders", async (req, res) => {
 });
 
 // Get finance summary using aggregation (public - aggregated data)
-router.get("/finance/summary", async (req, res) => {
+router.get("/finance/summary", async (req: Request, res: Response) => {
   try {
     const filters = {
       hospitalId: req.query.hospitalId as string,
@@ -209,7 +209,7 @@ router.get("/finance/summary", async (req, res) => {
     };
     
     const pipeline = AggregationService.getFinanceAggregated(filters);
-    const financeData = await FinanceEntry.aggregate(pipeline);
+    const financeData = await FinanceEntry.aggregate(pipeline as any[]);
     
     res.json({
       success: true,
@@ -226,7 +226,7 @@ router.get("/finance/summary", async (req, res) => {
 });
 
 // Get inventory with alerts using aggregation (public)
-router.get("/inventory", async (req, res) => {
+router.get("/inventory", async (req: Request, res: Response) => {
   try {
     const filters = {
       pharmacyId: req.query.pharmacyId as string,
@@ -235,7 +235,7 @@ router.get("/inventory", async (req, res) => {
     };
     
     const pipeline = AggregationService.getInventoryWithAlerts(filters);
-    const inventory = await InventoryItem.aggregate(pipeline);
+    const inventory = await InventoryItem.aggregate(pipeline as any[]);
     
     res.json({
       success: true,
@@ -252,7 +252,7 @@ router.get("/inventory", async (req, res) => {
 });
 
 // Get prescriptions with details (public - with filters)
-router.get("/prescriptions", async (req, res) => {
+router.get("/prescriptions", async (req: Request, res: Response) => {
   try {
     const filters = {
       patientId: req.query.patientId as string,
@@ -261,7 +261,7 @@ router.get("/prescriptions", async (req, res) => {
     };
     
     const pipeline = AggregationService.getPrescriptionsWithDetails(filters);
-    const prescriptions = await Prescription.aggregate(pipeline);
+    const prescriptions = await Prescription.aggregate(pipeline as any[]);
     
     res.json({
       success: true,
@@ -278,7 +278,7 @@ router.get("/prescriptions", async (req, res) => {
 });
 
 // Statistics endpoint (public aggregated stats)
-router.get("/stats", async (_req, res) => {
+router.get("/stats", async (_req: Request, res: Response) => {
   try {
     const [
       totalHospitals,
