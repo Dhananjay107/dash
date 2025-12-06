@@ -9,6 +9,9 @@ import { User } from "../user/user.model";
 import { Conversation } from "../conversation/conversation.model";
 import { Prescription } from "../prescription/prescription.model";
 import { socketEvents } from "../socket/socket.server";
+import { createDoctorPatientHistory } from "../doctorHistory/doctorHistory.service";
+// Import model to ensure it's initialized
+import "../doctorHistory/doctorHistory.model";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -47,8 +50,15 @@ router.post(
       throw new AppError("Invalid scheduledAt date", 400);
     }
 
-    if (appointmentDate < new Date()) {
-      throw new AppError("Appointment cannot be scheduled in the past", 400);
+    // Allow appointments for today and future dates
+    // If booking for today, allow any time (doctor can handle same-day appointments)
+    const now = new Date();
+    const appointmentDateOnly = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate());
+    const todayOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Allow if appointment date is today or in the future
+    if (appointmentDateOnly < todayOnly) {
+      throw new AppError("Appointment cannot be scheduled in the past. Please select today or a future date.", 400);
     }
 
     // Validate age
@@ -76,6 +86,40 @@ router.post(
         reason: issue.trim(),
       }) as IAppointment;
     
+    // Record appointment in doctor-patient history when created
+    try {
+      console.log("📝 Creating appointment history on creation:", {
+        doctorId: appointment.doctorId,
+        patientId: appointment.patientId,
+        patientName: appointment.patientName,
+        appointmentId: String(appointment._id),
+      });
+      
+      const historyRecord = await createDoctorPatientHistory({
+        doctorId: appointment.doctorId,
+        patientId: appointment.patientId,
+        patientName: appointment.patientName,
+        historyType: "APPOINTMENT",
+        appointmentId: String(appointment._id),
+        appointmentDate: appointment.scheduledAt,
+        appointmentStatus: appointment.status,
+        metadata: {
+          issue: appointment.issue,
+          channel: appointment.channel,
+          created: true,
+        },
+      });
+      
+      console.log("✅ Appointment history created on creation:", historyRecord._id);
+    } catch (historyError: any) {
+      console.error("❌ Failed to record appointment history on creation:", historyError);
+      console.error("Error details:", {
+        message: historyError.message,
+        stack: historyError.stack,
+      });
+      // Don't fail the request if history recording fails
+    }
+
     // Emit activity
     await createActivity(
       "APPOINTMENT_CREATED",
@@ -118,8 +162,11 @@ router.post(
     socketEvents.emitToUser(appointment.doctorId, "appointment:created", {
       appointmentId: String(appointment._id),
       patientId: appointment.patientId,
+      doctorId: appointment.doctorId,
       scheduledAt: appointment.scheduledAt,
       status: appointment.status,
+      patientName: appointment.patientName,
+      reason: appointment.reason || appointment.issue,
     });
     socketEvents.emitToAdmin("appointment:created", {
       appointmentId: String(appointment._id),
@@ -235,11 +282,13 @@ router.patch("/:id/status", validateRequired(["status"]), async (req: Request, r
       appointmentId: String(appointment._id),
       status,
       doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
       scheduledAt: appointment.scheduledAt,
     });
     socketEvents.emitToUser(appointment.doctorId, "appointment:statusUpdated", {
       appointmentId: String(appointment._id),
       status,
+      doctorId: appointment.doctorId,
       patientId: appointment.patientId,
       scheduledAt: appointment.scheduledAt,
     });
@@ -261,6 +310,44 @@ router.patch("/:id/status", validateRequired(["status"]), async (req: Request, r
         conversation.isActive = false;
         conversation.endedAt = new Date();
         await conversation.save();
+      }
+    }
+
+    // Record in doctor-patient history when appointment is completed
+    if (status === "COMPLETED") {
+      try {
+        const patient = await User.findById(appointment.patientId);
+        const patientName = patient?.name || appointment.patientName || `Patient ${appointment.patientId.slice(-8)}`;
+        
+        console.log("📝 Creating appointment history:", {
+          doctorId: appointment.doctorId,
+          patientId: appointment.patientId,
+          patientName,
+          appointmentId: String(appointment._id),
+        });
+        
+        const historyRecord = await createDoctorPatientHistory({
+          doctorId: appointment.doctorId,
+          patientId: appointment.patientId,
+          patientName,
+          historyType: "APPOINTMENT",
+          appointmentId: String(appointment._id),
+          appointmentDate: appointment.scheduledAt,
+          appointmentStatus: status,
+          metadata: {
+            issue: appointment.issue,
+            channel: appointment.channel,
+          },
+        });
+        
+        console.log("✅ Appointment history created:", historyRecord._id);
+      } catch (historyError: any) {
+        console.error("❌ Failed to record appointment history:", historyError);
+        console.error("Error details:", {
+          message: historyError.message,
+          stack: historyError.stack,
+        });
+        // Don't fail the request if history recording fails
       }
     }
 
@@ -290,16 +377,31 @@ router.patch("/:id/status", validateRequired(["status"]), async (req: Request, r
 // Reschedule appointment (Doctor & Admin)
 router.patch("/:id/reschedule", validateRequired(["scheduledAt"]), async (req: Request, res: Response) => {
   try {
-    const { scheduledAt } = req.body;
+    const { scheduledAt, reason } = req.body;
     const newDate = new Date(scheduledAt);
     
     if (isNaN(newDate.getTime())) {
       throw new AppError("Invalid scheduledAt date", 400);
     }
 
+    // Allow appointments for today and future dates
+    const now = new Date();
+    const appointmentDateOnly = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate());
+    const todayOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Allow if appointment date is today or in the future
+    if (appointmentDateOnly < todayOnly) {
+      throw new AppError("Appointment cannot be rescheduled to a past date. Please select today or a future date.", 400);
+    }
+
+    const updateData: any = { scheduledAt: newDate };
+    if (reason && reason.trim()) {
+      updateData.reason = reason.trim();
+    }
+
     const appointment = await Appointment.findByIdAndUpdate(
       req.params.id,
-      { scheduledAt: newDate },
+      updateData,
       { new: true }
     ) as IAppointment | null;
 

@@ -7,6 +7,7 @@ export interface IInventoryItem extends Document {
   expiryDate: Date;
   quantity: number;
   threshold: number;
+  price?: number; // Price per unit
   distributorId?: string;
 }
 
@@ -18,6 +19,7 @@ const InventorySchema = new Schema<IInventoryItem>(
     expiryDate: { type: Date, required: true },
     quantity: { type: Number, required: true },
     threshold: { type: Number, required: true, default: 10 },
+    price: { type: Number, default: 100 }, // Default price if not specified
     distributorId: { type: String },
   },
   { timestamps: true }

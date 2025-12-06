@@ -5,6 +5,7 @@ import { requireAuth } from "../shared/middleware/auth";
 import { AppError } from "../shared/middleware/errorHandler";
 import { socketEvents } from "../socket/socket.server";
 import { User } from "../user/user.model";
+import { createNotification } from "../notifications/notification.service";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -70,6 +71,23 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
     const patientIdStr = String(patientId);
     const requestId = getReportRequestId(reportRequest);
 
+    // Create notification for patient
+    await createNotification({
+      userId: patientIdStr,
+      type: "REPORT_REQUESTED",
+      title: "Report Request from Doctor",
+      message: `Dr. ${doctorName} has requested a ${reportType} report. ${description ? `Details: ${description}` : ""}`,
+      metadata: {
+        requestId,
+        doctorId: String(doctorId),
+        doctorName,
+        reportType,
+        description,
+        requestedAt: reportRequest.requestedAt,
+      },
+      channel: "PUSH",
+    });
+
     // Emit Socket.IO event to patient
     socketEvents.emitToUser(patientIdStr, "report:requested", {
       requestId,
@@ -79,6 +97,14 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
       description,
       requestedAt: reportRequest.requestedAt,
       patientId: patientIdStr,
+    });
+
+    // Also emit notification event
+    socketEvents.emitToUser(patientIdStr, "notification:new", {
+      type: "REPORT_REQUESTED",
+      title: "Report Request from Doctor",
+      message: `Dr. ${doctorName} has requested a ${reportType} report.`,
+      requestId,
     });
 
     res.status(201).json(reportRequest);
@@ -186,14 +212,44 @@ router.patch(
 
       await reportRequest.save();
 
+      // Fetch patient name for notification
+      const patient = await User.findById(reportRequest.patientId).select("name").lean();
+      const patientName = patient?.name || "Patient";
+
+      // Create notification for doctor
+      await createNotification({
+        userId: reportRequest.doctorId,
+        type: "REPORT_UPLOADED",
+        title: "Report Uploaded",
+        message: `${patientName} has uploaded the ${reportRequest.reportType} report you requested.`,
+        metadata: {
+          requestId: getReportRequestId(reportRequest),
+          patientId: reportRequest.patientId,
+          patientName,
+          reportType: reportRequest.reportType,
+          fileUrl: reportRequest.fileUrl,
+          fileName: reportRequest.fileName,
+        },
+        channel: "PUSH",
+      });
+
       // Emit Socket.IO event to doctor
       socketEvents.emitToUser(reportRequest.doctorId, "report:uploaded", {
         requestId: getReportRequestId(reportRequest),
         patientId: reportRequest.patientId,
+        patientName,
         reportType: reportRequest.reportType,
         fileUrl: reportRequest.fileUrl,
         fileName: reportRequest.fileName,
         uploadedAt: reportRequest.uploadedAt,
+      });
+
+      // Also emit notification event
+      socketEvents.emitToUser(reportRequest.doctorId, "notification:new", {
+        type: "REPORT_UPLOADED",
+        title: "Report Uploaded",
+        message: `${patientName} has uploaded the ${reportRequest.reportType} report.`,
+        requestId: getReportRequestId(reportRequest),
       });
 
       res.json(reportRequest);

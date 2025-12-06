@@ -27,11 +27,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const token = header.substring(BEARER_PREFIX_LENGTH);
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
+    // Verify token, but ignore expiration errors since tokens never expire
+    const decoded = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true }) as AuthUser;
     req.user = decoded;
     next();
   } catch (error) {
-    res.status(401).json({ message: "Invalid or expired token" });
+    res.status(401).json({ message: "Invalid token" });
   }
 }
 

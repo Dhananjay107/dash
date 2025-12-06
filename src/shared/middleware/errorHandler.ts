@@ -56,8 +56,10 @@ export function errorHandler(err: any, _req: Request, res: Response, _next: Next
     return;
   }
 
+  // TokenExpiredError should not occur since we use ignoreExpiration: true
+  // But keeping this for backward compatibility
   if (err.name === "TokenExpiredError") {
-    res.status(401).json(createErrorResponse("Token expired"));
+    res.status(401).json(createErrorResponse("Invalid token"));
     return;
   }
 

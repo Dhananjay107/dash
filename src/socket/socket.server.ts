@@ -50,7 +50,8 @@ export function initializeSocket(server: HTTPServer): SocketIOServer {
     }
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
+      // Verify token, but ignore expiration errors since tokens never expire
+      const decoded = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true }) as JWTPayload;
       socket.userId = decoded.sub;
       socket.userRole = decoded.role;
       next();
@@ -65,28 +66,37 @@ export function initializeSocket(server: HTTPServer): SocketIOServer {
     const userId = socket.userId;
     const userRole = socket.userRole;
 
-    log(`Socket connected: User ${userId} (${userRole}) - Socket ID: ${socket.id}`);
+    log(`✅ Socket connected: User ${userId} (${userRole}) - Socket ID: ${socket.id}`);
 
     // Join user-specific room
     if (userId) {
       const roomName = getUserRoom(userId);
       socket.join(roomName);
-      log(`User ${userId} joined room: ${roomName}`);
+      log(`✅ User ${userId} joined room: ${roomName}`);
     }
 
     // Join role-specific rooms
     if (userRole) {
-      socket.join(getRoleRoom(userRole));
+      const roleRoom = getRoleRoom(userRole);
+      socket.join(roleRoom);
+      log(`✅ User ${userId} joined role room: ${roleRoom}`);
     }
 
     // Join admin room
     if (userRole === "SUPER_ADMIN" || userRole === "ADMIN") {
       socket.join("admin");
+      log(`✅ User ${userId} joined admin room`);
     }
+
+    // Log all rooms user is in
+    setTimeout(() => {
+      const rooms = Array.from(socket.rooms);
+      log(`📋 User ${userId} is in rooms:`, rooms);
+    }, 100);
 
     // Handle disconnection
     socket.on("disconnect", (reason) => {
-      log(`Socket disconnected: User ${userId} (${userRole}) - Reason: ${reason}`);
+      log(`❌ Socket disconnected: User ${userId} (${userRole}) - Reason: ${reason}`);
     });
 
     // Handle custom events
@@ -96,13 +106,15 @@ export function initializeSocket(server: HTTPServer): SocketIOServer {
 
     // Test event to verify connection
     socket.on("test:connection", () => {
+      const rooms = Array.from(socket.rooms);
       socket.emit("test:response", {
         userId,
         userRole,
         socketId: socket.id,
-        rooms: Array.from(socket.rooms),
+        rooms,
         timestamp: Date.now(),
       });
+      log(`✅ Test response sent to user ${userId}, rooms:`, rooms);
     });
   });
 
@@ -129,13 +141,18 @@ export const socketEvents = {
     const socketsInRoom = io.sockets.adapter.rooms.get(room);
     const socketCount = socketsInRoom ? socketsInRoom.size : 0;
 
-    log(`Emitting ${event} to room: ${room} (${socketCount} socket(s))`);
+    log(`📤 Emitting ${event} to room: ${room} (${socketCount} socket(s))`);
+    log(`📤 Event data:`, JSON.stringify(data, null, 2));
 
     if (socketCount === 0) {
-      logWarn(`No sockets found in room ${room}! User might not be connected.`);
+      logWarn(`⚠️ No sockets found in room ${room}! User ${userId} might not be connected.`);
+      logWarn(`⚠️ Available rooms:`, Array.from(io.sockets.adapter.rooms.keys()));
+    } else {
+      log(`✅ Found ${socketCount} socket(s) in room ${room}, emitting event...`);
     }
 
     io.to(room).emit(event, data);
+    log(`✅ Event ${event} emitted to room ${room}`);
   },
 
   // Emit to all users with specific role

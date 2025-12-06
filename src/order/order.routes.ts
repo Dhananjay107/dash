@@ -74,6 +74,67 @@ const emitOrderCancelled = (order: IOrder) => {
   });
 };
 
+// Patient creates a direct medicine order (not from prescription)
+router.post(
+  "/medicine-order",
+  requireAuth,
+  requireRole(["PATIENT"]),
+  async (req, res) => {
+    try {
+      const { pharmacyId, items, deliveryType, deliveryAddress, phoneNumber } = req.body;
+      
+      if (!pharmacyId) {
+        return res.status(400).json({ message: "pharmacyId is required" });
+      }
+      
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "items array is required" });
+      }
+
+      if (deliveryType === "DELIVERY" && !deliveryAddress) {
+        return res.status(400).json({ message: "deliveryAddress is required for delivery" });
+      }
+
+      // Create order with PENDING status - will be reviewed by admin
+      const order = await Order.create({
+        pharmacyId,
+        patientId: req.user!.sub,
+        items: items.map((item: any) => ({
+          medicineName: item.medicineName,
+          quantity: item.quantity,
+        })),
+        status: "PENDING",
+        deliveryType: deliveryType || "PICKUP",
+        deliveryAddress: deliveryType === "DELIVERY" ? deliveryAddress : undefined,
+      });
+
+      await createActivity(
+        "ORDER_CREATED",
+        "New Medicine Order Created",
+        `Patient ${order.patientId} created a direct medicine order. Waiting for admin approval.`,
+        {
+          orderId: getOrderId(order),
+          patientId: order.patientId,
+          pharmacyId: order.pharmacyId,
+          metadata: {
+            orderType: "DIRECT_MEDICINE_ORDER",
+            itemCount: order.items.length,
+            deliveryType: order.deliveryType,
+            phoneNumber,
+          },
+        }
+      );
+
+      emitOrderCreated(order);
+
+      res.status(201).json(order);
+    } catch (error: any) {
+      console.error("Error creating medicine order:", error);
+      res.status(400).json({ message: error.message || "Failed to create order" });
+    }
+  }
+);
+
 // Patient creates an order from prescription
 router.post(
   "/",
@@ -89,6 +150,7 @@ router.post(
       
       const order = await Order.create({
         ...orderData,
+        pharmacyId,
         patientId: req.user!.sub,
         status: "PENDING",
       });

@@ -4,6 +4,7 @@ import cors from "cors";
 import morgan from "morgan";
 import { createServer } from "http";
 import "express-async-errors";
+import path from "path";
 
 import { registerRoutes } from "./routes";
 import { errorHandler } from "./shared/middleware/errorHandler";
@@ -32,6 +33,9 @@ app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(audit);
+
+// Serve static files from uploads directory
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 registerRoutes(app);
 app.use(errorHandler);

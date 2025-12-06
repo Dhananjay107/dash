@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../shared/middleware/auth";
 import { validateRequest } from "../shared/middleware/validation";
 import { body } from "express-validator";
 import { createActivity } from "../activity/activity.service";
+import { socketEvents } from "../socket/socket.server";
 
 export const router = Router();
 
@@ -106,6 +107,25 @@ router.post(
 
       conversation.messages.push(message);
       await conversation.save();
+
+      // Emit Socket.IO events for real-time message updates
+      const messageData = {
+        conversationId: getConversationId(conversation),
+        appointmentId: conversation.appointmentId,
+        message: {
+          senderId: message.senderId,
+          senderRole: message.senderRole,
+          messageType: message.messageType,
+          content: message.content,
+          timestamp: message.timestamp,
+        },
+        doctorId: conversation.doctorId,
+        patientId: conversation.patientId,
+      };
+
+      // Emit to both doctor and patient
+      socketEvents.emitToUser(conversation.doctorId, "message:created", messageData);
+      socketEvents.emitToUser(conversation.patientId, "message:created", messageData);
 
       res.json(conversation);
     } catch (error: any) {

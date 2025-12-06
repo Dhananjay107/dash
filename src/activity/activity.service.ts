@@ -18,11 +18,23 @@ export async function createActivity(
   description: string,
   metadata?: ActivityMetadata
 ): Promise<IActivity> {
+  // Filter out undefined values from metadata to prevent ObjectId cast errors
+  const cleanMetadata: ActivityMetadata = {};
+  if (metadata) {
+    Object.keys(metadata).forEach((key) => {
+      const value = metadata[key];
+      // Only include defined values that are not the string "undefined"
+      if (value !== undefined && value !== null && value !== "undefined") {
+        cleanMetadata[key] = value;
+      }
+    });
+  }
+  
   return await Activity.create({
     type,
     title,
     description,
-    ...metadata,
+    ...cleanMetadata,
   });
 }
 

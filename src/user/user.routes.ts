@@ -9,36 +9,112 @@ import { createActivity } from "../activity/activity.service";
 
 export const router = Router();
 
+// Contact Support endpoint
+router.post(
+  "/support/contact",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { subject, message, userId, userEmail, userName } = req.body;
+      
+      if (!subject || !message) {
+        return res.status(400).json({ message: "Subject and message are required" });
+      }
+
+      // In a real app, you would:
+      // 1. Save to database
+      // 2. Send email notification to support team
+      // 3. Create a support ticket
+      
+      // For now, we'll just log it and return success
+      console.log("Support Request:", {
+        subject,
+        message,
+        userId,
+        userEmail,
+        userName,
+        timestamp: new Date().toISOString(),
+      });
+
+      // You could also create a notification for admins here
+      // await createNotification({...});
+
+      res.status(200).json({
+        message: "Support request received. We'll get back to you soon.",
+        success: true,
+      });
+    } catch (error: any) {
+      console.error("Support request error:", error);
+      res.status(500).json({ message: error.message || "Failed to submit support request" });
+    }
+  }
+);
+
 // Basic signup for initial testing (Super Admin can later create all users)
 router.post("/signup", async (req, res) => {
-  const { name, email, password, role } = req.body;
+  try {
+    const { name, email, password, role, hospitalId, pharmacyId, distributorId } = req.body;
 
-  const existing = await User.findOne({ email });
-  if (existing) {
-    return res.status(400).json({ message: "Email already in use" });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-
-  const user = await User.create({
-    name,
-    email,
-    passwordHash,
-    role,
-  });
-
-  // Emit activity for user creation
-  await createActivity(
-    "USER_CREATED",
-    "New User Created",
-    `New ${role} user created: ${name} (${email})`,
-    {
-      userId: String(user._id),
-      metadata: { role, email },
+    // Validate required fields
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ message: "Missing required fields: name, email, password, role" });
     }
-  );
 
-  res.status(201).json({ id: String(user._id), name: user.name, email: user.email, role: user.role });
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const userData: any = {
+      name,
+      email,
+      passwordHash,
+      role,
+    };
+
+    // Add optional fields if provided
+    if (hospitalId) userData.hospitalId = hospitalId;
+    if (pharmacyId) userData.pharmacyId = pharmacyId;
+    if (distributorId) userData.distributorId = distributorId;
+
+    const user = await User.create(userData);
+
+    // Emit activity for user creation
+    await createActivity(
+      "USER_CREATED",
+      "New User Created",
+      `New ${role} user created: ${name} (${email})`,
+      {
+        userId: String(user._id),
+        metadata: { role, email },
+      }
+    );
+
+    // Return user data with _id to match frontend expectations
+    const userResponse: any = {
+      _id: String(user._id),
+      id: String(user._id),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+    };
+    if (user.hospitalId) userResponse.hospitalId = user.hospitalId;
+    if (user.pharmacyId) userResponse.pharmacyId = user.pharmacyId;
+    if (user.distributorId) userResponse.distributorId = user.distributorId;
+    if (user.phone) userResponse.phone = user.phone;
+
+    res.status(201).json(userResponse);
+  } catch (error: any) {
+    // Handle MongoDB duplicate key error (race condition)
+    if (error.code === 11000 || error.message?.includes("duplicate key")) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+    console.error("Signup error:", error);
+    res.status(400).json({ message: error.message || "Failed to create user" });
+  }
 });
 
 router.post("/login", async (req, res) => {
@@ -59,8 +135,8 @@ router.post("/login", async (req, res) => {
       sub: String(user._id),
       role: user.role,
     },
-    JWT_SECRET,
-    { expiresIn: "12h" }
+    JWT_SECRET
+    // No expiration - token never expires
   );
 
   res.json({
@@ -121,8 +197,28 @@ router.get(
   requireAuth,
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (_req, res) => {
-    const users = await User.find().limit(50).sort({ createdAt: -1 });
-    res.json(users);
+    try {
+      const users = await User.find().limit(50).sort({ createdAt: -1 }).select("-passwordHash");
+      // Ensure _id is properly formatted
+      const formattedUsers = users.map((user: any) => ({
+        _id: String(user._id),
+        id: String(user._id),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone || undefined,
+        hospitalId: user.hospitalId || undefined,
+        pharmacyId: user.pharmacyId || undefined,
+        distributorId: user.distributorId || undefined,
+        isActive: user.isActive !== undefined ? user.isActive : true,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      }));
+      res.json(formattedUsers);
+    } catch (error: any) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch users" });
+    }
   }
 );
 
@@ -141,12 +237,18 @@ router.get(
         return res.status(404).json({ message: "Invalid endpoint" });
       }
 
+      // Validate ID parameter
+      const userId = req.params.id;
+      if (!userId || userId === "undefined" || !mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+
       // Select fields based on user role
       const userRole = req.user.role;
       const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
       
       // All authenticated users can view basic user info (passwordHash is always excluded)
-      const user = await User.findById(req.params.id).select("-passwordHash");
+      const user = await User.findById(userId).select("-passwordHash");
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -168,23 +270,49 @@ router.patch(
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     try {
-      const { name, email, phone, role, hospitalId, pharmacyId, distributorId, isActive } = req.body;
+      // Validate ID parameter
+      const userId = req.params.id;
+      if (!userId || userId === "undefined" || !mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+
+      const { name, email, phone, role, hospitalId, pharmacyId, distributorId, isActive, password } = req.body;
       const update: any = {};
       
       if (name !== undefined) update.name = name;
       if (email !== undefined) update.email = email;
       if (phone !== undefined) update.phone = phone;
       if (role !== undefined) update.role = role;
-      if (hospitalId !== undefined) update.hospitalId = hospitalId;
-      if (pharmacyId !== undefined) update.pharmacyId = pharmacyId;
-      if (distributorId !== undefined) update.distributorId = distributorId;
+      if (hospitalId !== undefined) {
+        // If empty string, set to undefined to clear the field
+        update.hospitalId = hospitalId === "" ? undefined : hospitalId;
+      }
+      if (pharmacyId !== undefined) {
+        update.pharmacyId = pharmacyId === "" ? undefined : pharmacyId;
+      }
+      if (distributorId !== undefined) {
+        update.distributorId = distributorId === "" ? undefined : distributorId;
+      }
       if (isActive !== undefined) update.isActive = isActive;
 
+      // Handle password update
+      if (password !== undefined && password !== "") {
+        update.passwordHash = await bcrypt.hash(password, 10);
+      }
+
+      // Check if email is already in use by another user
+      if (email !== undefined) {
+        const existingUser = await User.findOne({ email, _id: { $ne: userId } });
+        if (existingUser) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+      }
+
       const user = await User.findByIdAndUpdate(
-        req.params.id,
+        userId,
         { $set: update },
         { new: true, runValidators: true }
-      );
+      ).select("-passwordHash");
       
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -200,8 +328,32 @@ router.patch(
         }
       );
 
-      res.json(user);
+      // Return formatted user response
+      const userResponse: any = {
+        _id: String(user._id),
+        id: String(user._id),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive !== undefined ? user.isActive : true,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+      if (user.phone) userResponse.phone = user.phone;
+      if (user.hospitalId) userResponse.hospitalId = user.hospitalId;
+      if (user.pharmacyId) userResponse.pharmacyId = user.pharmacyId;
+      if (user.distributorId) userResponse.distributorId = user.distributorId;
+
+      res.json(userResponse);
     } catch (error: any) {
+      // Handle MongoDB duplicate key error
+      if (error.code === 11000 || error.message?.includes("duplicate key")) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+      // Handle ObjectId cast errors
+      if (error.message?.includes("Cast to ObjectId failed")) {
+        return res.status(400).json({ message: "Invalid user ID format" });
+      }
       res.status(400).json({ message: error.message });
     }
   }
@@ -214,7 +366,12 @@ router.delete(
   requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     try {
+      // Validate ID parameter
       const userId = req.params.id;
+      if (!userId || userId === "undefined" || !mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });

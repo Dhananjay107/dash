@@ -4,6 +4,9 @@ import { createActivity } from "../activity/activity.service";
 import { validateRequired } from "../shared/middleware/validation";
 import { AppError } from "../shared/middleware/errorHandler";
 import { socketEvents } from "../socket/socket.server";
+import { createDoctorPatientHistory } from "../doctorHistory/doctorHistory.service";
+// Import model to ensure it's initialized
+import "../doctorHistory/doctorHistory.model";
 
 export const router = Router();
 
@@ -172,6 +175,46 @@ router.post(
         });
       }
       
+      // Fetch patient name for history
+      const { User } = await import("../user/user.model");
+      const patient = await User.findById(prescription.patientId);
+      const patientName = patient?.name || `Patient ${prescription.patientId.slice(-8)}`;
+
+      // Record in doctor-patient history
+      try {
+        console.log("📝 Creating doctor-patient history for prescription:", {
+          doctorId: prescription.doctorId,
+          patientId: prescription.patientId,
+          patientName,
+          prescriptionId: getPrescriptionId(prescription),
+        });
+        
+        const historyRecord = await createDoctorPatientHistory({
+          doctorId: prescription.doctorId,
+          patientId: prescription.patientId,
+          patientName,
+          historyType: "PRESCRIPTION",
+          appointmentId: prescription.appointmentId,
+          prescriptionId: getPrescriptionId(prescription),
+          prescriptionItems: prescription.items,
+          prescriptionNotes: prescription.notes || prescription.suggestions,
+          metadata: {
+            itemCount: prescription.items.length,
+            reportStatus: prescription.reportStatus,
+          },
+        });
+        
+        console.log("✅ Doctor-patient history created successfully:", historyRecord._id);
+      } catch (historyError: any) {
+        console.error("❌ Failed to record prescription history:", historyError);
+        console.error("Error details:", {
+          message: historyError.message,
+          stack: historyError.stack,
+          name: historyError.name,
+        });
+        // Don't fail the request if history recording fails
+      }
+
       await createActivity(
         "PRESCRIPTION_CREATED",
         "New Prescription Created",
