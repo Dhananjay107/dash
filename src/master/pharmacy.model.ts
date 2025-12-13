@@ -2,6 +2,7 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IPharmacy extends Document {
   hospitalId?: string;
+  distributorId?: string;
   name: string;
   address: string;
   phone?: string;
@@ -17,6 +18,7 @@ export interface IPharmacy extends Document {
 const PharmacySchema = new Schema<IPharmacy>(
   {
     hospitalId: { type: String, index: true },
+    distributorId: { type: String, index: true },
     name: { type: String, required: true },
     address: { type: String, required: true },
     phone: { type: String },

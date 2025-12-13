@@ -45,7 +45,7 @@ const upload = multer({
 // Create report request (Doctor)
 router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { patientId, reportType, description } = req.body;
+    const { patientId, reportType, description, appointmentId, conversationId } = req.body;
     const doctorId = req.user?.sub;
 
     if (!doctorId) {
@@ -61,6 +61,8 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
       patientId,
       reportType,
       description,
+      appointmentId,
+      conversationId,
       status: "PENDING",
     });
 

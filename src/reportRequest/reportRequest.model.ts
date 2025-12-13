@@ -3,6 +3,8 @@ import mongoose, { Document, Model, Schema } from "mongoose";
 export interface IReportRequest extends Document {
   doctorId: string;
   patientId: string;
+  appointmentId?: string;
+  conversationId?: string;
   requestedAt: Date;
   reportType: string;
   description?: string;
@@ -23,6 +25,14 @@ const ReportRequestSchema = new Schema<IReportRequest>(
       type: String,
       required: true,
       ref: "User",
+    },
+    appointmentId: {
+      type: String,
+      index: true,
+    },
+    conversationId: {
+      type: String,
+      index: true,
     },
     requestedAt: {
       type: Date,

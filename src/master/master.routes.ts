@@ -103,15 +103,56 @@ router.post(
   }
 );
 
+// GET /pharmacies - List all pharmacies (with optional distributorId filter)
 router.get(
   "/pharmacies",
   requireAuth,
-  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
-  async (_req, res) => {
+  async (req, res) => {
     try {
-      const pharmacies = await Pharmacy.find().sort({ createdAt: -1 });
+      const { distributorId } = req.query;
+      const filter: any = {};
+      
+      // Check user role - distributors can only see their own pharmacies
+      const userRole = req.user?.role;
+      console.log("GET /pharmacies - User role:", userRole, "User ID:", req.user?.sub);
+      
+      if (userRole === "DISTRIBUTOR") {
+        const { User } = await import("../user/user.model");
+        const currentUser = await User.findById(req.user!.sub);
+        console.log("Distributor user from DB:", currentUser ? { id: currentUser._id, distributorId: currentUser.distributorId } : "not found");
+        
+        if (currentUser?.distributorId) {
+          filter.distributorId = currentUser.distributorId;
+          console.log("Filtering pharmacies by distributorId:", currentUser.distributorId);
+        } else {
+          // If distributor user doesn't have distributorId, return empty
+          console.log("Distributor user has no distributorId, returning empty array");
+          return res.json([]);
+        }
+      } else if (userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN") {
+        // For admins, allow filtering by distributorId query parameter
+        if (distributorId) {
+          filter.distributorId = distributorId;
+        }
+      } else {
+        // For other roles, return empty or only their own if they have pharmacyId
+        if (userRole === "PHARMACY_STAFF") {
+          const { User } = await import("../user/user.model");
+          const currentUser = await User.findById(req.user!.sub);
+          if (currentUser?.pharmacyId) {
+            // Pharmacy staff can see their own pharmacy
+            const pharmacy = await Pharmacy.findById(currentUser.pharmacyId);
+            return res.json(pharmacy ? [pharmacy] : []);
+          }
+        }
+        return res.json([]);
+      }
+      
+      const pharmacies = await Pharmacy.find(filter).sort({ createdAt: -1 });
+      console.log(`Found ${pharmacies.length} pharmacies with filter:`, filter);
       res.json(pharmacies);
     } catch (error: any) {
+      console.error("Error fetching pharmacies:", error);
       res.status(400).json({ message: error.message });
     }
   }
