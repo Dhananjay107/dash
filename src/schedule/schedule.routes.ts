@@ -171,31 +171,87 @@ router.get("/slots/available", async (req: Request, res: Response) => {
 });
 
 // Generate slots for a date range (Admin/Background job)
-router.post("/slots/generate", validateRequired(["doctorId", "startDate", "endDate"]), async (req: Request, res: Response) => {
-  try {
-    const { doctorId, startDate, endDate, hospitalId } = req.body;
+router.post(
+  "/slots/generate",
+  requireAuth,
+  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN", "DOCTOR"]),
+  validateRequired(["doctorId", "startDate", "endDate"]),
+  async (req: Request, res: Response) => {
+    try {
+      const { doctorId, startDate, endDate, hospitalId } = req.body;
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      throw new AppError("Invalid date format", 400);
-    }
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new AppError("Invalid date format", 400);
+      }
 
-    if (start > end) {
-      throw new AppError("startDate must be before endDate", 400);
-    }
+      if (start > end) {
+        throw new AppError("startDate must be before endDate", 400);
+      }
 
-    const slots = await generateSlotsForDateRange(doctorId, start, end, hospitalId);
-    res.json({ message: "Slots generated successfully", count: slots.length, slots });
-  } catch (error: any) {
-    if (error instanceof AppError) {
-      res.status(error.status).json({ message: error.message });
-    } else {
-      res.status(400).json({ message: error.message });
+      // Check if doctor has any active schedules
+      const scheduleFilter: any = {
+        doctorId,
+        isActive: true,
+      };
+      if (hospitalId) {
+        scheduleFilter.$or = [
+          { hospitalId: hospitalId },
+          { hospitalId: { $exists: false } },
+          { hospitalId: null },
+        ];
+      }
+
+      const hasSchedule = await DoctorSchedule.findOne(scheduleFilter);
+      if (!hasSchedule) {
+        throw new AppError(
+          `No active schedule found for this doctor. Please create a schedule first before generating slots.`,
+          400
+        );
+      }
+
+      const slots = await generateSlotsForDateRange(doctorId, start, end, hospitalId);
+      
+      if (slots.length === 0) {
+        return res.json({
+          message: "No slots generated. The doctor may not have active schedules for the selected date range.",
+          count: 0,
+          slots: [],
+        });
+      }
+
+      // Emit real-time update for slot generation
+      try {
+        const { socketEvents } = await import("../socket/socket.server");
+        socketEvents.emitToUser(doctorId, "slots:generated", {
+          doctorId,
+          count: slots.length,
+          startDate: start,
+          endDate: end,
+        });
+        socketEvents.emitToAdmin("slots:generated", {
+          doctorId,
+          count: slots.length,
+          startDate: start,
+          endDate: end,
+        });
+      } catch (error) {
+        console.warn("Failed to emit slot generation event:", error);
+      }
+
+      res.json({ message: "Slots generated successfully", count: slots.length, slots });
+    } catch (error: any) {
+      console.error("[Slots Generate] Error:", error);
+      if (error instanceof AppError) {
+        res.status(error.status).json({ message: error.message });
+      } else {
+        res.status(400).json({ message: error.message || "Failed to generate slots" });
+      }
     }
   }
-});
+);
 
 // Block a slot (Doctor/Admin)
 router.post("/slots/:id/block", async (req: Request, res: Response) => {
@@ -207,6 +263,32 @@ router.post("/slots/:id/block", async (req: Request, res: Response) => {
 
     slot.isBlocked = true;
     await slot.save();
+
+    // Emit real-time update for slot blocking
+    try {
+      const { socketEvents } = await import("../socket/socket.server");
+      socketEvents.emitToUser(slot.doctorId, "slot:updated", {
+        slotId: String(slot._id),
+        doctorId: slot.doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBlocked: slot.isBlocked,
+        isBooked: slot.isBooked,
+        bookedCount: slot.bookedCount,
+      });
+      socketEvents.emitToAdmin("slot:updated", {
+        slotId: String(slot._id),
+        doctorId: slot.doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBlocked: slot.isBlocked,
+        isBooked: slot.isBooked,
+      });
+    } catch (error) {
+      console.warn("Failed to emit slot update event:", error);
+    }
 
     res.json(slot);
   } catch (error: any) {
@@ -228,6 +310,32 @@ router.post("/slots/:id/unblock", async (req: Request, res: Response) => {
 
     slot.isBlocked = false;
     await slot.save();
+
+    // Emit real-time update for slot unblocking
+    try {
+      const { socketEvents } = await import("../socket/socket.server");
+      socketEvents.emitToUser(slot.doctorId, "slot:updated", {
+        slotId: String(slot._id),
+        doctorId: slot.doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBlocked: slot.isBlocked,
+        isBooked: slot.isBooked,
+        bookedCount: slot.bookedCount,
+      });
+      socketEvents.emitToAdmin("slot:updated", {
+        slotId: String(slot._id),
+        doctorId: slot.doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBlocked: slot.isBlocked,
+        isBooked: slot.isBooked,
+      });
+    } catch (error) {
+      console.warn("Failed to emit slot update event:", error);
+    }
 
     res.json(slot);
   } catch (error: any) {

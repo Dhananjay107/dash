@@ -151,15 +151,18 @@ router.post(
         patientId: conversation.patientId,
       };
 
-      // Emit to both doctor and patient
-      socketEvents.emitToUser(conversation.doctorId, "message:created", messageData);
-      socketEvents.emitToUser(conversation.patientId, "message:created", messageData);
+      // Determine recipient - only emit to the other party (not the sender)
+      const recipientId = message.senderRole === "DOCTOR" ? conversation.patientId : conversation.doctorId;
+      
+      // Emit message:created only to recipient for real-time UI update
+      if (recipientId) {
+        socketEvents.emitToUser(recipientId, "message:created", messageData);
+      }
 
       // Notify the other party about new message
       try {
         const { User } = await import("../user/user.model");
         const sender = await User.findById(message.senderId);
-        const recipientId = message.senderRole === "DOCTOR" ? conversation.patientId : conversation.doctorId;
         const recipient = await User.findById(recipientId);
         
         if (recipientId && message.messageType === "TEXT") {

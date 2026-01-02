@@ -23,6 +23,11 @@ import { router as scheduleRouter } from "./schedule/schedule.routes";
 import { router as mfaRouter } from "./user/mfa.routes";
 import { router as transcriptionRouter } from "./transcription/transcription.routes";
 import { router as invoiceRouter } from "./invoice/invoice.routes";
+import { router as pharmacyInvoiceRouter } from "./invoice/pharmacyInvoice.routes";
+import { router as auditRouter } from "./audit/audit.routes";
+import { router as inventorySearchRouter } from "./inventory/inventory-search.routes";
+import { router as pharmacyReportsRouter } from "./reports/pharmacyReports.routes";
+import { router as medicineSearchRouter } from "./public/medicineSearch.routes";
 
 export function registerRoutes(app: Express) {
   // Root route - API information
@@ -41,6 +46,7 @@ export function registerRoutes(app: Express) {
 
   // Public API routes (no authentication required)
   app.use("/api/public", publicRouter);
+  app.use("/api/public/medicine", medicineSearchRouter);
   
   // Protected API routes (authentication required)
   app.use("/api/users", userRouter);
@@ -66,6 +72,10 @@ export function registerRoutes(app: Express) {
   app.use("/api/doctor-records", doctorRecordRouter);
   app.use("/api/schedules", scheduleRouter);
   app.use("/api/invoices", invoiceRouter);
+  app.use("/api/pharmacy-invoices", pharmacyInvoiceRouter);
+  app.use("/api/audits", auditRouter);
+  app.use("/api/inventory", inventorySearchRouter); // Search routes added to inventory
+  app.use("/api/reports/pharmacy", pharmacyReportsRouter);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });

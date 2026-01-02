@@ -44,7 +44,10 @@ export type ActivityType =
   | "DOCTOR_RECORD_UPDATED"
   | "DOCTOR_RECORD_DELETED"
   | "ORDER_DELETED"
-  | "INVENTORY_CREATED";
+  | "INVENTORY_CREATED"
+  | "PHARMACY_INVOICE_CREATED"
+  | "AUDIT_CREATED"
+  | "AUDIT_MISMATCH";
 
 export interface IActivity extends Document {
   type: ActivityType;
@@ -109,6 +112,9 @@ const ActivitySchema = new Schema<IActivity>(
         "DOCTOR_RECORD_DELETED",
         "ORDER_DELETED",
         "INVENTORY_CREATED",
+        "PHARMACY_INVOICE_CREATED",
+        "AUDIT_CREATED",
+        "AUDIT_MISMATCH",
       ],
       required: true,
       index: true,

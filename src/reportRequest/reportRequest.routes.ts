@@ -133,17 +133,35 @@ router.get("/", requireAuth, async (req: Request, res: Response) => {
 
     let query: any = {};
 
-    if (patientId) {
+    // Handle both patientId and doctorId filters together
+    if (patientId && doctorId) {
+      // Both filters provided - show reports for this patient-doctor combination
+      if (userRole === "PATIENT" && patientId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      if (userRole === "DOCTOR" && doctorId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      query.patientId = patientId;
+      query.doctorId = doctorId;
+    } else if (patientId) {
+      // Only patientId provided
       if (userRole === "PATIENT" && patientId !== userId) {
         return res.status(403).json({ message: "Access denied" });
       }
       query.patientId = patientId;
+      // If doctor is requesting, also filter by their doctorId
+      if (userRole === "DOCTOR") {
+        query.doctorId = userId;
+      }
     } else if (doctorId) {
+      // Only doctorId provided
       if (userRole === "DOCTOR" && doctorId !== userId) {
         return res.status(403).json({ message: "Access denied" });
       }
       query.doctorId = doctorId;
     } else {
+      // No filters - show based on user role
       if (userRole === "PATIENT") {
         query.patientId = userId;
       } else if (userRole === "DOCTOR") {
@@ -244,6 +262,7 @@ router.patch(
         fileUrl: reportRequest.fileUrl,
         fileName: reportRequest.fileName,
         uploadedAt: reportRequest.uploadedAt,
+        appointmentId: reportRequest.appointmentId,
       });
 
       // Also emit notification event

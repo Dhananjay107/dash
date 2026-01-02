@@ -244,14 +244,51 @@ router.post(
         endTime: bookedSlot.endTime,
         scheduledAt: appointment.scheduledAt,
       });
+      
+      // Emit slot update to all users viewing this doctor's slots
+      socketEvents.emitToUser(appointment.doctorId, "slot:updated", {
+        slotId: String(bookedSlot._id),
+        doctorId: appointment.doctorId,
+        date: bookedSlot.date,
+        startTime: bookedSlot.startTime,
+        endTime: bookedSlot.endTime,
+        isBooked: bookedSlot.isBooked,
+        bookedCount: bookedSlot.bookedCount,
+        maxBookings: bookedSlot.maxBookings,
+      });
+      
+      // Emit to patient as well
+      socketEvents.emitToUser(appointment.patientId, "slot:booked", {
+        slotId: String(bookedSlot._id),
+        appointmentId: String(appointment._id),
+        doctorId: appointment.doctorId,
+        startTime: bookedSlot.startTime,
+        endTime: bookedSlot.endTime,
+        scheduledAt: appointment.scheduledAt,
+      });
     }
+    
     socketEvents.emitToAdmin("appointment:created", {
       appointmentId: String(appointment._id),
       patientId: appointment.patientId,
       doctorId: appointment.doctorId,
       scheduledAt: appointment.scheduledAt,
       status: appointment.status,
+      slotId: bookedSlot?._id ? String(bookedSlot._id) : undefined,
     });
+    
+    // Emit slot update to admin
+    if (bookedSlot) {
+      socketEvents.emitToAdmin("slot:updated", {
+        slotId: String(bookedSlot._id),
+        doctorId: appointment.doctorId,
+        date: bookedSlot.date,
+        startTime: bookedSlot.startTime,
+        endTime: bookedSlot.endTime,
+        isBooked: bookedSlot.isBooked,
+        bookedCount: bookedSlot.bookedCount,
+      });
+    }
     
       res.status(201).json(appointment);
     } catch (error: any) {
@@ -650,13 +687,20 @@ router.patch("/:id/reschedule", validateRequired(["scheduledAt"]), async (req: R
       throw new AppError("Appointment not found", 404);
     }
 
-    // Check authorization - doctor can only reschedule their own appointments
+    // Check authorization - doctor, admin, or patient can reschedule their own appointments
     const userId = (req as any).user?.sub;
     const userRole = (req as any).user?.role;
     const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+    const isDoctor = userRole === "DOCTOR";
+    const isPatient = userRole === "PATIENT";
     
-    if (!isAdmin && oldAppointment.doctorId !== userId) {
-      throw new AppError("You can only reschedule your own appointments", 403);
+    // Convert IDs to strings for comparison
+    const doctorIdStr = String(oldAppointment.doctorId);
+    const patientIdStr = String(oldAppointment.patientId);
+    const userIdStr = String(userId);
+    
+    if (!isAdmin && !(isDoctor && doctorIdStr === userIdStr) && !(isPatient && patientIdStr === userIdStr)) {
+      throw new AppError("You don't have permission to reschedule this appointment", 403);
     }
     let newBookedSlot = null;
     if (oldAppointment) {
@@ -726,13 +770,20 @@ router.patch("/:id/cancel", validateRequired(["cancellationReason"]), async (req
       throw new AppError("Appointment not found", 404);
     }
 
-    // Check authorization - doctor can only cancel their own appointments
+    // Check authorization - doctor, admin, or patient can cancel their own appointments
     const userId = (req as any).user?.sub;
     const userRole = (req as any).user?.role;
     const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+    const isDoctor = userRole === "DOCTOR";
+    const isPatient = userRole === "PATIENT";
     
-    if (!isAdmin && appointment.doctorId !== userId) {
-      throw new AppError("You can only cancel your own appointments", 403);
+    // Convert IDs to strings for comparison
+    const doctorIdStr = String(appointment.doctorId);
+    const patientIdStr = String(appointment.patientId);
+    const userIdStr = String(userId);
+    
+    if (!isAdmin && !(isDoctor && doctorIdStr === userIdStr) && !(isPatient && patientIdStr === userIdStr)) {
+      throw new AppError("You don't have permission to cancel this appointment", 403);
     }
 
     const updated = await Appointment.findByIdAndUpdate(

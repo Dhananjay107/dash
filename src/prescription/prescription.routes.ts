@@ -386,10 +386,26 @@ router.get("/by-patient/:patientId", async (req: Request, res: Response) => {
 // Get prescriptions for a pharmacy to fulfill
 router.get("/by-pharmacy/:pharmacyId", async (req: Request, res: Response) => {
   try {
+    const { User } = await import("../user/user.model");
     const items = await Prescription.find({ pharmacyId: req.params.pharmacyId })
       .sort({ createdAt: -1 })
-      .limit(50);
-    res.json(items);
+      .limit(50)
+      .lean();
+    
+    // Populate doctor and patient names
+    const populatedItems = await Promise.all(
+      items.map(async (prescription: any) => {
+        const doctor = await User.findById(prescription.doctorId).select("name email phone");
+        const patient = await User.findById(prescription.patientId).select("name email phone");
+        return {
+          ...prescription,
+          doctor: doctor ? { _id: String(doctor._id), name: doctor.name, email: doctor.email, phone: doctor.phone } : null,
+          patient: patient ? { _id: String(patient._id), name: patient.name, email: patient.email, phone: patient.phone } : null,
+        };
+      })
+    );
+    
+    res.json(populatedItems);
   } catch (error: any) {
     handleError(error, res, 500);
   }

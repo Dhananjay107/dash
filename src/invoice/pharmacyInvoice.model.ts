@@ -1,0 +1,134 @@
+import mongoose, { Schema, Document, Model } from "mongoose";
+
+export interface IPharmacyInvoiceItem {
+  inventoryItemId: string; // Reference to inventory item
+  medicineName: string;
+  composition: string;
+  brandName?: string;
+  batchNumber: string;
+  expiryDate: Date;
+  quantity: number;
+  mrp: number; // Maximum Retail Price
+  sellingPrice: number; // Actual selling price
+  discount: number; // Discount percentage
+  discountAmount: number; // Discount amount in currency
+  purchasePrice: number; // Cost price (for margin calculation)
+  margin: number; // Margin percentage
+  taxRate: number; // Tax rate percentage (e.g., 18 for 18% GST)
+  taxAmount: number; // Tax amount
+  subtotal: number; // Before tax and discount
+  total: number; // After discount and tax
+  rackNumber?: string;
+  rowNumber?: string;
+}
+
+export interface IPharmacyInvoice extends Document {
+  invoiceNumber: string; // Unique invoice number (e.g., INV-2024-001234)
+  pharmacyId: string;
+  patientId?: string; // Optional: for patient orders
+  orderId?: string; // Optional: link to order if from patient order
+  invoiceType: "PATIENT_ORDER" | "WALK_IN" | "MANUAL_BILL"; // Type of invoice
+  items: IPharmacyInvoiceItem[];
+  subtotal: number; // Total before discount and tax
+  totalDiscount: number; // Total discount amount
+  totalTax: number; // Total tax amount
+  grandTotal: number; // Final amount to pay
+  paymentMethod?: "CASH" | "CARD" | "UPI" | "NET_BANKING" | "WALLET";
+  paymentStatus: "PENDING" | "PAID" | "PARTIAL" | "REFUNDED";
+  paidAmount?: number;
+  dueAmount?: number;
+  billDate: Date;
+  createdBy: string; // User ID who created the invoice
+  notes?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+const PharmacyInvoiceItemSchema = new Schema<IPharmacyInvoiceItem>(
+  {
+    inventoryItemId: { type: String, required: true },
+    medicineName: { type: String, required: true },
+    composition: { type: String, required: true },
+    brandName: { type: String },
+    batchNumber: { type: String, required: true },
+    expiryDate: { type: Date, required: true },
+    quantity: { type: Number, required: true },
+    mrp: { type: Number, required: true },
+    sellingPrice: { type: Number, required: true },
+    discount: { type: Number, default: 0 },
+    discountAmount: { type: Number, default: 0 },
+    purchasePrice: { type: Number, required: true },
+    margin: { type: Number, default: 0 },
+    taxRate: { type: Number, default: 18 }, // Default 18% GST
+    taxAmount: { type: Number, default: 0 },
+    subtotal: { type: Number, required: true },
+    total: { type: Number, required: true },
+    rackNumber: { type: String },
+    rowNumber: { type: String },
+  },
+  { _id: false }
+);
+
+const PharmacyInvoiceSchema = new Schema<IPharmacyInvoice>(
+  {
+    invoiceNumber: { type: String, required: true, unique: true },
+    pharmacyId: { type: String, required: true, index: true },
+    patientId: { type: String, index: true },
+    orderId: { type: String },
+    invoiceType: {
+      type: String,
+      enum: ["PATIENT_ORDER", "WALK_IN", "MANUAL_BILL"],
+      required: true,
+      index: true,
+    },
+    items: { type: [PharmacyInvoiceItemSchema], required: true },
+    subtotal: { type: Number, required: true },
+    totalDiscount: { type: Number, default: 0 },
+    totalTax: { type: Number, required: true },
+    grandTotal: { type: Number, required: true },
+    paymentMethod: {
+      type: String,
+      enum: ["CASH", "CARD", "UPI", "NET_BANKING", "WALLET"],
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["PENDING", "PAID", "PARTIAL", "REFUNDED"],
+      default: "PENDING",
+      index: true,
+    },
+    paidAmount: { type: Number, default: 0 },
+    dueAmount: { type: Number },
+    billDate: { type: Date, required: true, default: Date.now, index: true },
+    createdBy: { type: String, required: true, index: true },
+    notes: { type: String },
+  },
+  { timestamps: true }
+);
+
+// Indexes for efficient queries
+PharmacyInvoiceSchema.index({ pharmacyId: 1, billDate: -1 });
+PharmacyInvoiceSchema.index({ patientId: 1, billDate: -1 });
+PharmacyInvoiceSchema.index({ orderId: 1 });
+// Note: invoiceNumber already has a unique index from unique: true constraint
+
+// Generate unique invoice number before saving
+PharmacyInvoiceSchema.pre("save", async function (next) {
+  if (this.isNew && !this.invoiceNumber) {
+    const year = new Date().getFullYear();
+    const count = await mongoose.model<IPharmacyInvoice>("PharmacyInvoice").countDocuments({
+      invoiceNumber: new RegExp(`^INV-${year}-`),
+    });
+    const sequence = String(count + 1).padStart(6, "0");
+    this.invoiceNumber = `INV-${year}-${sequence}`;
+  }
+  // Calculate due amount
+  if (this.paidAmount !== undefined && this.grandTotal !== undefined) {
+    this.dueAmount = Math.max(0, this.grandTotal - (this.paidAmount || 0));
+  }
+  next();
+});
+
+export const PharmacyInvoice: Model<IPharmacyInvoice> =
+  mongoose.models.PharmacyInvoice ||
+  mongoose.model<IPharmacyInvoice>("PharmacyInvoice", PharmacyInvoiceSchema);
+

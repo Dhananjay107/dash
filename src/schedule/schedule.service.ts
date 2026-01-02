@@ -23,9 +23,7 @@ export async function generateSlotsForDate(
   };
   const dayOfWeek = dayMap[dayOfWeekNum] as IDoctorSchedule["dayOfWeek"];
 
-  // Find doctor's schedule for this day
-  // If hospitalId is provided, match schedules with that hospitalId or no hospitalId
-  // If no hospitalId, match any schedule
+
   const scheduleFilter: any = {
     doctorId,
     dayOfWeek,
@@ -237,6 +235,33 @@ export async function bookSlot(
     newSlot.bookedCount += 1;
     newSlot.isBooked = newSlot.bookedCount >= newSlot.maxBookings;
     await newSlot.save();
+    
+    // Emit real-time update for slot booking
+    try {
+      const { socketEvents } = await import("../socket/socket.server");
+      socketEvents.emitToUser(doctorId, "slot:updated", {
+        slotId: String(newSlot._id),
+        doctorId,
+        date: newSlot.date,
+        startTime: newSlot.startTime,
+        endTime: newSlot.endTime,
+        isBooked: newSlot.isBooked,
+        bookedCount: newSlot.bookedCount,
+        maxBookings: newSlot.maxBookings,
+      });
+      socketEvents.emitToAdmin("slot:updated", {
+        slotId: String(newSlot._id),
+        doctorId,
+        date: newSlot.date,
+        startTime: newSlot.startTime,
+        endTime: newSlot.endTime,
+        isBooked: newSlot.isBooked,
+        bookedCount: newSlot.bookedCount,
+      });
+    } catch (error) {
+      console.warn("Failed to emit slot update event:", error);
+    }
+    
     return newSlot;
   }
 
@@ -262,6 +287,33 @@ export async function bookSlot(
   slot.isBooked = slot.bookedCount >= slot.maxBookings;
   await slot.save();
 
+  // Emit real-time update for slot booking
+  try {
+    const { socketEvents } = await import("../socket/socket.server");
+    socketEvents.emitToUser(doctorId, "slot:updated", {
+      slotId: String(slot._id),
+      doctorId,
+      date: slot.date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      isBooked: slot.isBooked,
+      bookedCount: slot.bookedCount,
+      maxBookings: slot.maxBookings,
+    });
+    // Also notify admin
+    socketEvents.emitToAdmin("slot:updated", {
+      slotId: String(slot._id),
+      doctorId,
+      date: slot.date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      isBooked: slot.isBooked,
+      bookedCount: slot.bookedCount,
+    });
+  } catch (error) {
+    console.warn("Failed to emit slot update event:", error);
+  }
+
   return slot;
 }
 
@@ -278,6 +330,32 @@ export async function releaseSlot(doctorId: string, startTime: Date): Promise<vo
     slot.bookedCount = Math.max(0, slot.bookedCount - 1);
     slot.isBooked = slot.bookedCount >= slot.maxBookings;
     await slot.save();
+    
+    // Emit real-time update for slot release
+    try {
+      const { socketEvents } = await import("../socket/socket.server");
+      socketEvents.emitToUser(doctorId, "slot:updated", {
+        slotId: String(slot._id),
+        doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBooked: slot.isBooked,
+        bookedCount: slot.bookedCount,
+        maxBookings: slot.maxBookings,
+      });
+      socketEvents.emitToAdmin("slot:updated", {
+        slotId: String(slot._id),
+        doctorId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        isBooked: slot.isBooked,
+        bookedCount: slot.bookedCount,
+      });
+    } catch (error) {
+      console.warn("Failed to emit slot update event:", error);
+    }
   }
 }
 
