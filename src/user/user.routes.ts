@@ -20,15 +20,6 @@ router.post(
       if (!subject || !message) {
         return res.status(400).json({ message: "Subject and message are required" });
       }
-
-      // In a real app, you would:
-      // 1. Save to database
-      // 2. Send email notification to support team
-      // 3. Create a support ticket
-
-      // You could also create a notification for admins here
-      // await createNotification({...});
-
       res.status(200).json({
         message: "Support request received. We'll get back to you soon.",
         success: true,
@@ -261,15 +252,27 @@ router.get(
   requireAuth,
   async (req, res) => {
     try {
-      const { role, status } = req.query;
+      const { role, status, pharmacyId } = req.query;
       const filter: any = {};
       
       if (role) filter.role = role;
       if (status) filter.status = status;
+      if (pharmacyId) filter.pharmacyId = pharmacyId;
 
       // Only admins can see all users, others can only see filtered by role
       const userRole = req.user?.role;
       const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+      const isPharmacyStaff = userRole === "PHARMACY_STAFF";
+      
+      // For pharmacy staff, automatically filter by their pharmacyId if role is DELIVERY_AGENT
+      if (isPharmacyStaff && role === "DELIVERY_AGENT") {
+        const currentUser = await User.findById(req.user!.sub).select("pharmacyId");
+        if (currentUser?.pharmacyId) {
+          filter.pharmacyId = currentUser.pharmacyId;
+        } else {
+          return res.status(403).json({ message: "Your account is not associated with a pharmacy" });
+        }
+      }
       
       if (!isAdmin && !role) {
         return res.status(403).json({ message: "Access denied. Role filter required for non-admin users." });
@@ -440,6 +443,7 @@ router.patch(
       const userRole = req.user?.role;
       const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
       const isDistributor = userRole === "DISTRIBUTOR";
+      const isPharmacyStaff = userRole === "PHARMACY_STAFF";
       
       const update: any = {};
       
@@ -485,6 +489,35 @@ router.patch(
         if (targetUser.role !== "DELIVERY_AGENT") {
           return res.status(403).json({ message: "Distributors can only update delivery agent status" });
         }
+        if (status !== undefined) update.status = status;
+        if (currentOrderId !== undefined) {
+          update.currentOrderId = currentOrderId === "" ? undefined : currentOrderId;
+        }
+      }
+      // Pharmacy staff can update delivery agents that belong to their pharmacy
+      else if (isPharmacyStaff) {
+        // Only allow updating delivery agents
+        if (targetUser.role !== "DELIVERY_AGENT") {
+          return res.status(403).json({ message: "Pharmacy staff can only update delivery agent profiles" });
+        }
+        // Get current user's pharmacyId from database (JWT doesn't include it)
+        const currentUser = await User.findById(req.user!.sub).select("pharmacyId");
+        if (!currentUser) {
+          return res.status(404).json({ message: "Current user not found" });
+        }
+        // Check if the delivery agent belongs to the same pharmacy
+        const currentUserPharmacyId = currentUser.pharmacyId;
+        if (currentUserPharmacyId && targetUser.pharmacyId !== currentUserPharmacyId) {
+          return res.status(403).json({ message: "You can only update delivery agents from your own pharmacy" });
+        }
+        // If current user doesn't have pharmacyId, deny access
+        if (!currentUserPharmacyId) {
+          return res.status(403).json({ message: "Your account is not associated with a pharmacy" });
+        }
+        // Pharmacy staff can update name, phone, email, and status
+        if (name !== undefined) update.name = name;
+        if (phone !== undefined) update.phone = phone;
+        if (email !== undefined) update.email = email;
         if (status !== undefined) update.status = status;
         if (currentOrderId !== undefined) {
           update.currentOrderId = currentOrderId === "" ? undefined : currentOrderId;
@@ -568,7 +601,6 @@ router.patch(
 router.delete(
   "/:id",
   requireAuth,
-  requireRole(["SUPER_ADMIN", "HOSPITAL_ADMIN"]),
   async (req, res) => {
     try {
       // Validate ID parameter
@@ -582,9 +614,36 @@ router.delete(
         return res.status(404).json({ message: "User not found" });
       }
 
+      const userRole = req.user?.role;
+      const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+      const isPharmacyStaff = userRole === "PHARMACY_STAFF";
+
+      // Permission checks
+      if (!isAdmin && !isPharmacyStaff) {
+        return res.status(403).json({ message: "Access denied. Only admins and pharmacy staff can delete users." });
+      }
+
       // Prevent deleting SUPER_ADMIN users
-      if (user.role === "SUPER_ADMIN" && req.user?.role !== "SUPER_ADMIN") {
+      if (user.role === "SUPER_ADMIN" && userRole !== "SUPER_ADMIN") {
         return res.status(403).json({ message: "Only SUPER_ADMIN can delete SUPER_ADMIN users" });
+      }
+
+      // Pharmacy staff can only delete delivery agents from their pharmacy
+      if (isPharmacyStaff) {
+        if (user.role !== "DELIVERY_AGENT") {
+          return res.status(403).json({ message: "Pharmacy staff can only delete delivery agents" });
+        }
+        // Get current user's pharmacyId from database
+        const currentUser = await User.findById(req.user!.sub).select("pharmacyId");
+        if (!currentUser) {
+          return res.status(404).json({ message: "Current user not found" });
+        }
+        if (!currentUser.pharmacyId) {
+          return res.status(403).json({ message: "Your account is not associated with a pharmacy" });
+        }
+        if (user.pharmacyId !== currentUser.pharmacyId) {
+          return res.status(403).json({ message: "You can only delete delivery agents from your own pharmacy" });
+        }
       }
 
       // Store user info before deletion

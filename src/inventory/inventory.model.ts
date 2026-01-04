@@ -1,5 +1,7 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
+export type ProductCategory = "MEDICINE" | "MEDICAL_EQUIPMENT" | "HEALTH_SUPPLEMENT" | "PERSONAL_CARE";
+
 export interface IInventoryItem extends Document {
   pharmacyId?: string; // Optional for warehouse inventory
   medicineName: string;
@@ -18,6 +20,11 @@ export interface IInventoryItem extends Document {
   rackNumber?: string; // Rack name/number
   rowNumber?: string; // Row/shelf number
   distributorId?: string;
+  // Product display fields
+  category?: ProductCategory; // Product category
+  imageUrl?: string; // Product image URL
+  description?: string; // Product description
+  prescriptionRequired?: boolean; // Whether prescription is required
   // Legacy field for backward compatibility
   price?: number; // Deprecated: use sellingPrice instead
 }
@@ -40,6 +47,16 @@ const InventorySchema = new Schema<IInventoryItem>(
     rackNumber: { type: String },
     rowNumber: { type: String },
     distributorId: { type: String, index: true },
+    // Product display fields
+    category: { 
+      type: String, 
+      enum: ["MEDICINE", "MEDICAL_EQUIPMENT", "HEALTH_SUPPLEMENT", "PERSONAL_CARE"],
+      default: "MEDICINE",
+      index: true 
+    },
+    imageUrl: { type: String },
+    description: { type: String },
+    prescriptionRequired: { type: Boolean, default: false, index: true },
     // Legacy field
     price: { type: Number }, // Deprecated
   },
@@ -53,6 +70,8 @@ InventorySchema.index({ pharmacyId: 1, brandName: 1 });
 InventorySchema.index({ pharmacyId: 1, batchNumber: 1 });
 InventorySchema.index({ pharmacyId: 1, expiryDate: 1 });
 InventorySchema.index({ composition: 1, brandName: 1 });
+InventorySchema.index({ pharmacyId: 1, category: 1 });
+InventorySchema.index({ category: 1, quantity: 1 });
 InventorySchema.index({ medicineName: "text", composition: "text", brandName: "text" });
 
 // Pre-save hook to calculate margin

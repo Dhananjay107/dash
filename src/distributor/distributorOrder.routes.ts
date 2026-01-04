@@ -23,12 +23,13 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    const { pharmacyId, distributorId, medicineName, quantity } = req.body;
+    const { pharmacyId, distributorId, medicineName, category, quantity } = req.body;
 
     const order = await DistributorOrder.create({
       pharmacyId,
       distributorId,
       medicineName,
+      category: category || undefined,
       quantity,
       status: "PENDING",
     });

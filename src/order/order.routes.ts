@@ -82,8 +82,9 @@ router.post(
   requireRole(["PATIENT"]),
   async (req, res) => {
     try {
-      const { pharmacyId, items, deliveryType, deliveryAddress, phoneNumber, totalAmount, deliveryCharge } = req.body;
-      
+      const { pharmacyId, items, deliveryType, deliveryAddress, phoneNumber, totalAmount, deliveryCharge, prescriptionImageUrl, patientLocation } = req.body;
+
+      // Validate required fields
       if (!pharmacyId) {
         return res.status(400).json({ message: "pharmacyId is required" });
       }
@@ -97,7 +98,7 @@ router.post(
       }
 
       // Create order with PENDING status - will be reviewed by admin
-      const order = await Order.create({
+      const orderData: any = {
         pharmacyId,
         patientId: req.user!.sub,
         items: items.map((item: any) => ({
@@ -110,9 +111,13 @@ router.post(
         phoneNumber,
         totalAmount: totalAmount || 0,
         deliveryCharge: deliveryCharge || 0,
-        patientLocation: req.body.patientLocation,
+        prescriptionImageUrl: prescriptionImageUrl || undefined,
+        prescriptionVerified: false,
+        patientLocation: patientLocation || req.body.patientLocation,
         pharmacyLocation: req.body.pharmacyLocation,
-      });
+      };
+
+      const order = await Order.create(orderData);
 
       // Create finance entries when order is created (payment happens at checkout)
       if (order.totalAmount && order.totalAmount > 0) {
@@ -872,6 +877,76 @@ router.put(
     }
   }
 );
+
+// Update order (general update route for pharmacy staff and admin)
+router.patch("/:id", requireAuth, requireRole(["PHARMACY_STAFF", "SUPER_ADMIN", "HOSPITAL_ADMIN"]), async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Check authorization - pharmacy staff can only update orders for their pharmacy
+    const userId = req.user!.sub;
+    const userRole = req.user!.role;
+    const isAdmin = userRole === "SUPER_ADMIN" || userRole === "HOSPITAL_ADMIN";
+    
+    if (userRole === "PHARMACY_STAFF") {
+      // Get user's pharmacyId from database
+      const { User } = await import("../user/user.model");
+      const user = await User.findById(userId);
+      if (!user || !user.pharmacyId) {
+        return res.status(403).json({ message: "You are not associated with a pharmacy" });
+      }
+      
+      if (String(order.pharmacyId) !== String(user.pharmacyId)) {
+        return res.status(403).json({ message: "You can only update orders for your pharmacy" });
+      }
+    }
+
+    // Only allow updating specific fields
+    const allowedUpdates: any = {};
+    if (req.body.prescriptionVerified !== undefined) {
+      allowedUpdates.prescriptionVerified = req.body.prescriptionVerified;
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
+    const updated = await Order.findByIdAndUpdate(
+      req.params.id,
+      allowedUpdates,
+      { new: true }
+    );
+
+    // Log activity if prescription was verified
+    if (allowedUpdates.prescriptionVerified !== undefined) {
+      await createActivity(
+        "ORDER_UPDATED",
+        "Prescription Verification Updated",
+        `Prescription for order ${getShortOrderId(order)} ${allowedUpdates.prescriptionVerified ? "verified" : "rejected"}`,
+        {
+          patientId: order.patientId,
+          pharmacyId: order.pharmacyId,
+          metadata: {
+            orderId: getOrderId(order),
+            prescriptionVerified: allowedUpdates.prescriptionVerified,
+          },
+        }
+      );
+
+      // Emit socket event
+      emitOrderStatusUpdate(updated!, order.status, {
+        prescriptionVerified: allowedUpdates.prescriptionVerified,
+      });
+    }
+
+    res.json(updated);
+  } catch (error: any) {
+    res.status(500).json({ message: "Failed to update order", error: error.message });
+  }
+});
 
 // Delete order (Patient can delete their own, Admin can delete any)
 router.delete("/:id", requireAuth, async (req, res) => {

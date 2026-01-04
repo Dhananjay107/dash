@@ -11,63 +11,125 @@ export const router = Router();
 router.post("/daily", requireAuth, requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]), async (req: Request, res: Response) => {
   try {
     const { pharmacyId, auditDate } = req.body;
-    const userId = (req as any).user?.userId;
+    const userId = (req as any).user?.userId || (req as any).user?.sub;
 
-    const auditDateObj = auditDate ? new Date(auditDate) : new Date();
+    console.log("Creating daily audit:", { pharmacyId, auditDate, userId });
+
+    // Validate required fields
+    if (!pharmacyId) {
+      console.error("Missing pharmacyId in request");
+      return res.status(400).json({ message: "pharmacyId is required" });
+    }
+
+    // Handle date - if it's a string in YYYY-MM-DD format, parse it correctly
+    let auditDateObj: Date;
+    if (auditDate) {
+      // If it's already a date string in YYYY-MM-DD format
+      if (typeof auditDate === 'string' && auditDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // Parse as UTC to avoid timezone issues
+        const [year, month, day] = auditDate.split('-').map(Number);
+        auditDateObj = new Date(Date.UTC(year, month - 1, day));
+      } else {
+        auditDateObj = new Date(auditDate);
+      }
+    } else {
+      auditDateObj = new Date();
+    }
+    
+    // Validate date
+    if (isNaN(auditDateObj.getTime())) {
+      console.error("Invalid date:", auditDate);
+      return res.status(400).json({ message: `Invalid audit date format: ${auditDate}` });
+    }
+    
+    // Set to start of day in local timezone
     auditDateObj.setHours(0, 0, 0, 0);
+    
+    console.log("Parsed audit date:", auditDateObj.toISOString());
 
-    // Check if audit already exists
+    // Check if audit already exists (use date range to handle timezone issues)
+    const startOfDay = new Date(auditDateObj);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(auditDateObj);
+    endOfDay.setHours(23, 59, 59, 999);
+
     const existingAudit = await StockAudit.findOne({
       pharmacyId,
-      auditDate: auditDateObj,
+      auditDate: { $gte: startOfDay, $lte: endOfDay },
       auditType: "DAILY",
     });
 
     if (existingAudit) {
+      console.log("Audit already exists for date:", auditDateObj.toISOString());
       return res.status(400).json({ message: "Daily audit already exists for this date" });
     }
 
     // Get all inventory items for the pharmacy
     const inventoryItems = await InventoryItem.find({ pharmacyId });
+    console.log(`Found ${inventoryItems.length} inventory items for pharmacy ${pharmacyId}`);
+    
+    // Check if pharmacyId exists in any inventory items (for debugging)
+    if (inventoryItems.length === 0) {
+      const allItemsCount = await InventoryItem.countDocuments({});
+      const itemsWithDifferentPharmacy = await InventoryItem.distinct("pharmacyId");
+      console.log(`Total inventory items in database: ${allItemsCount}`);
+      console.log(`Unique pharmacyIds found: ${itemsWithDifferentPharmacy.join(", ")}`);
+    }
 
-    // Get system sales for the day (from invoices)
-    const startOfDay = new Date(auditDateObj);
-    const endOfDay = new Date(auditDateObj);
-    endOfDay.setHours(23, 59, 59, 999);
-
+    // Get system sales for the day (from invoices) - reuse date range from above
     const invoices = await PharmacyInvoice.find({
       pharmacyId,
       billDate: { $gte: startOfDay, $lte: endOfDay },
     });
+    console.log(`Found ${invoices.length} invoices for the audit date`);
 
     // Create audit items
-    const auditItems = inventoryItems.map((item) => {
-      // Calculate system sales from invoices
-      let systemSales = 0;
-      invoices.forEach((invoice) => {
-        invoice.items.forEach((invoiceItem) => {
-          if (String(invoiceItem.inventoryItemId) === String(item._id)) {
-            systemSales += invoiceItem.quantity;
-          }
+    const filteredItems = inventoryItems.filter((item) => item.medicineName && item.batchNumber);
+    console.log(`After filtering (medicineName and batchNumber required): ${filteredItems.length} valid items`);
+    
+    const auditItems = filteredItems
+      .map((item) => {
+        // Calculate system sales from invoices
+        let systemSales = 0;
+        invoices.forEach((invoice) => {
+          invoice.items.forEach((invoiceItem) => {
+            if (String(invoiceItem.inventoryItemId) === String(item._id)) {
+              systemSales += invoiceItem.quantity;
+            }
+          });
         });
+
+        return {
+          inventoryItemId: String(item._id),
+          medicineName: item.medicineName,
+          composition: item.composition || item.medicineName, // Fallback to medicineName if composition missing
+          brandName: item.brandName || undefined,
+          batchNumber: item.batchNumber,
+          openingStock: item.quantity + systemSales, // Current stock + sales = opening stock
+          systemSales,
+          manualBills: 0, // To be filled by user
+          totalSales: systemSales,
+          expectedClosingStock: item.quantity, // Current stock is expected closing
+          actualClosingStock: undefined,
+          variance: undefined,
+        };
       });
 
-      return {
-        inventoryItemId: String(item._id),
-        medicineName: item.medicineName,
-        composition: item.composition,
-        brandName: item.brandName,
-        batchNumber: item.batchNumber,
-        openingStock: item.quantity + systemSales, // Current stock + sales = opening stock
-        systemSales,
-        manualBills: 0, // To be filled by user
-        totalSales: systemSales,
-        expectedClosingStock: item.quantity, // Current stock is expected closing
-        actualClosingStock: undefined,
-        variance: undefined,
-      };
-    });
+    // Ensure we have at least one item
+    if (auditItems.length === 0) {
+      console.error("No valid inventory items found after filtering");
+      let errorMessage = `No inventory items found for pharmacy ${pharmacyId}. `;
+      if (inventoryItems.length === 0) {
+        errorMessage += "Please add inventory items in the Inventory section first.";
+      } else {
+        const invalidItems = inventoryItems.filter((item) => !item.medicineName || !item.batchNumber);
+        errorMessage += `Found ${inventoryItems.length} items, but ${invalidItems.length} are missing required fields (medicineName or batchNumber).`;
+      }
+      return res.status(400).json({ message: errorMessage });
+    }
 
+    console.log(`Creating audit with ${auditItems.length} items`);
+    
     const audit = await StockAudit.create({
       pharmacyId,
       auditDate: auditDateObj,
@@ -75,8 +137,10 @@ router.post("/daily", requireAuth, requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]
       items: auditItems,
       totalItems: auditItems.length,
       status: "IN_PROGRESS",
-      createdBy: userId,
+      createdBy: userId || pharmacyId, // Fallback to pharmacyId if userId not available
     } as IStockAudit);
+    
+    console.log("Audit created successfully:", audit._id);
 
     await createActivity(
       "AUDIT_CREATED",
@@ -93,7 +157,11 @@ router.post("/daily", requireAuth, requireRole(["SUPER_ADMIN", "PHARMACY_STAFF"]
 
     res.status(201).json(audit);
   } catch (error: any) {
-    res.status(400).json({ message: error.message });
+    console.error("Error creating daily audit:", error);
+    res.status(400).json({ 
+      message: error.message || "Failed to create daily audit",
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined
+    });
   }
 });
 
@@ -111,10 +179,10 @@ router.patch("/:id/closing-stock", requireAuth, requireRole(["SUPER_ADMIN", "PHA
     const itemsMap = new Map(items.map((item: any) => [item.inventoryItemId, item]));
 
     audit.items = audit.items.map((item) => {
-      const update = itemsMap.get(item.inventoryItemId);
+      const update = itemsMap.get(item.inventoryItemId) as any;
       if (update) {
         item.actualClosingStock = update.actualClosingStock;
-        if (item.expectedClosingStock !== undefined) {
+        if (item.expectedClosingStock !== undefined && update.actualClosingStock !== undefined) {
           item.variance = update.actualClosingStock - item.expectedClosingStock;
         }
         if (update.varianceReason) {
@@ -178,9 +246,9 @@ router.patch("/:id/manual-bills", requireAuth, requireRole(["SUPER_ADMIN", "PHAR
     const itemsMap = new Map(items.map((item: any) => [item.inventoryItemId, item]));
 
     audit.items = audit.items.map((item) => {
-      const update = itemsMap.get(item.inventoryItemId);
+      const update = itemsMap.get(item.inventoryItemId) as any;
       if (update) {
-        item.manualBills = update.manualBills;
+        item.manualBills = update.manualBills || 0;
         item.totalSales = item.systemSales + item.manualBills;
         item.expectedClosingStock = item.openingStock - item.totalSales;
         if (item.actualClosingStock !== undefined) {

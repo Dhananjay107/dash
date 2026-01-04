@@ -129,16 +129,16 @@ export interface IAuditLog extends Document {
 }
 
 const AuditLogSchema = new Schema<IAuditLog>(
-  {
+    {
     userId: { type: String, index: true },
     method: { type: String, required: true, index: true },
     path: { type: String, required: true, index: true },
-    body: { type: Schema.Types.Mixed },
+      body: { type: Schema.Types.Mixed },
     ip: { type: String },
     userAgent: { type: String },
-  },
-  { timestamps: true }
-);
+    },
+    { timestamps: true }
+  );
 
 // Compound index for querying by user and path
 AuditLogSchema.index({ userId: 1, createdAt: -1 });

@@ -28,6 +28,8 @@ import { router as auditRouter } from "./audit/audit.routes";
 import { router as inventorySearchRouter } from "./inventory/inventory-search.routes";
 import { router as pharmacyReportsRouter } from "./reports/pharmacyReports.routes";
 import { router as medicineSearchRouter } from "./public/medicineSearch.routes";
+import { router as productsRouter } from "./public/products.routes";
+import { router as uploadRouter } from "./public/upload.routes";
 
 export function registerRoutes(app: Express) {
   // Root route - API information
@@ -47,6 +49,8 @@ export function registerRoutes(app: Express) {
   // Public API routes (no authentication required)
   app.use("/api/public", publicRouter);
   app.use("/api/public/medicine", medicineSearchRouter);
+  app.use("/api/public/products", productsRouter);
+  app.use("/api/public/upload", uploadRouter);
   
   // Protected API routes (authentication required)
   app.use("/api/users", userRouter);

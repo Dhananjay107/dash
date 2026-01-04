@@ -20,6 +20,8 @@ export interface IOrder extends Document {
   phoneNumber?: string;
   totalAmount?: number;
   deliveryCharge?: number;
+  prescriptionImageUrl?: string; // Uploaded prescription image URL
+  prescriptionVerified?: boolean; // Whether prescription was verified by pharmacy
   deliveryPersonId?: string; // ID of delivery person assigned
   deliveryPersonName?: string; // Name of delivery person
   deliveryPersonPhone?: string; // Contact number of delivery person
@@ -81,6 +83,8 @@ const OrderSchema = new Schema<IOrder>(
     phoneNumber: { type: String },
     totalAmount: { type: Number },
     deliveryCharge: { type: Number },
+    prescriptionImageUrl: { type: String },
+    prescriptionVerified: { type: Boolean, default: false },
     deliveryPersonId: { type: String },
     deliveryPersonName: { type: String },
     deliveryPersonPhone: { type: String },
