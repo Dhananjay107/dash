@@ -236,54 +236,13 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-// List inventory for a pharmacy
+// List inventory for a pharmacy (returns [] if pharmacy has no items yet)
 router.get("/by-pharmacy/:pharmacyId", async (req: Request, res: Response) => {
   try {
-    const pharmacyId = req.params.pharmacyId;
-    console.log(`📋 Fetching inventory for pharmacy: ${pharmacyId}`);
-    console.log(`  - pharmacyId type: ${typeof pharmacyId}`);
-    console.log(`  - pharmacyId length: ${pharmacyId?.length}`);
-    
-    // First, check if there are ANY items in the database for debugging
-    const totalItems = await InventoryItem.countDocuments({});
-    console.log(`  - Total items in database: ${totalItems}`);
-    
-    // Check if there are any items with this pharmacyId (with type coercion)
-    const itemsWithId = await InventoryItem.find({ pharmacyId: pharmacyId })
+    const pharmacyId = String(req.params.pharmacyId).trim();
+    const items = await InventoryItem.find({ pharmacyId })
       .sort({ medicineName: 1 })
       .limit(500);
-    
-    // Also try string comparison
-    const itemsWithStringId = await InventoryItem.find({ pharmacyId: String(pharmacyId) })
-      .sort({ medicineName: 1 })
-      .limit(500);
-    
-    // Get all unique pharmacyIds in database for debugging
-    const allItems = await InventoryItem.find({}).limit(10).select("pharmacyId medicineName").lean();
-    const uniquePharmacyIds = [...new Set(allItems.map((item: any) => String(item.pharmacyId)))];
-    console.log(`  - Sample pharmacyIds in database (first 10 items):`, uniquePharmacyIds);
-    
-    // Use the results that match
-    const items = itemsWithId.length > 0 ? itemsWithId : itemsWithStringId;
-    
-    console.log(`  - Items found with exact match: ${itemsWithId.length}`);
-    console.log(`  - Items found with string match: ${itemsWithStringId.length}`);
-    console.log(`✅ Found ${items.length} inventory items for pharmacy ${pharmacyId}`);
-    
-    if (items.length > 0) {
-      console.log(`Sample items:`, items.slice(0, 3).map((item: any) => ({ 
-        medicineName: item.medicineName, 
-        category: item.category, 
-        quantity: item.quantity,
-        pharmacyId: String(item.pharmacyId),
-        pharmacyIdType: typeof item.pharmacyId
-      })));
-    } else {
-      console.warn(`⚠️ No items found for pharmacy ${pharmacyId}`);
-      console.warn(`  - Check if pharmacyId in database matches: ${pharmacyId}`);
-      console.warn(`  - Available pharmacyIds: ${uniquePharmacyIds.join(", ")}`);
-    }
-    
     res.json(items);
   } catch (error: any) {
     console.error("❌ Error fetching inventory:", error);
