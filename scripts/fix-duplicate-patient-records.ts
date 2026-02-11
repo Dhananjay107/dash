@@ -1,19 +1,17 @@
-/**
- * Script to fix duplicate patientId records in patientrecords collection
- * Run this once to clean up duplicates before creating unique index
- * 
- * Usage: npx ts-node scripts/fix-duplicate-patient-records.ts
- */
-
+/// <reference types="node" />
 import "dotenv/config";
 import mongoose from "mongoose";
 import { PatientRecord } from "../src/patient/patientRecord.model";
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://d:123@cluster0.qv3mrd1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  console.error("❌ MONGO_URI environment variable is required");
+  process.exit(1);
+}
 
 async function fixDuplicates() {
   try {
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(MONGO_URI as string);
     console.log("✅ Connected to MongoDB");
 
     console.log("🔍 Finding duplicate patientId records...");
@@ -48,7 +46,7 @@ async function fixDuplicates() {
         .lean();
       
       if (records.length > 1) {
-        // Keep the most recent record, merge data from others
+      
         const primaryRecord = records[0];
         const duplicateRecords = records.slice(1);
         
@@ -77,11 +75,11 @@ async function fixDuplicates() {
           hospitalizationHistory: [
             ...(primaryRecord.hospitalizationHistory || []),
             ...duplicateRecords.flatMap((r: any) => r.hospitalizationHistory || [])
-          ].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          ].sort((a: any, b: any) => (new Date(b?.date).getTime() || 0) - (new Date(a?.date).getTime() || 0)),
           labReports: [
             ...(primaryRecord.labReports || []),
             ...duplicateRecords.flatMap((r: any) => r.labReports || [])
-          ].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          ].sort((a: any, b: any) => (new Date(b?.date).getTime() || 0) - (new Date(a?.date).getTime() || 0)),
         };
 
         // Merge notes
@@ -96,8 +94,9 @@ async function fixDuplicates() {
           mergedRecord.notes = allNotes[0];
         }
 
-        // Update primary record with merged data
-        await PatientRecord.findByIdAndUpdate(primaryRecord._id, mergedRecord);
+        // Update primary record with merged data (omit _id and __v)
+        const { _id: _omit, __v: _vOmit, ...updatePayload } = mergedRecord;
+        await PatientRecord.findByIdAndUpdate(primaryRecord._id, { $set: updatePayload });
         
         // Delete duplicate records
         const duplicateIds = duplicateRecords.map((r: any) => r._id);

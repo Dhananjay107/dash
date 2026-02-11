@@ -1,9 +1,3 @@
-/**
- * Seed Dummy Data Script
- * Populates database with sample data for testing templates and prescription flow
- * 
- * Usage: npx ts-node scripts/seed-dummy-data.ts
- */
 
 import "dotenv/config";
 import mongoose from "mongoose";
